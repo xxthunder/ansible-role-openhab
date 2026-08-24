@@ -1,0 +1,203 @@
+---
+# Git wiring for openHAB's two repositories (HSH-057c).
+#
+# conf/ and userdata/ carry opposite ownership -- the repo is the source of
+# truth for config, the host is the source of truth for runtime state -- but
+# the role treats them the same way at runtime: it seeds a target that is not
+# yet seeded, and never touches one that is. Nothing here fetches on a
+# converged host, so the role needs no Gitea credential in steady state and
+# there is no code path that can reset a populated tree.
+#
+# Making new config live is a deliberate operator step (a manual pull), not
+# something a deploy does behind their back.
+#
+# The two repos differ only in what counts as "not yet seeded":
+#   conf/      -- no .git inside it. An empty or file-populated conf/ is fair
+#                 game, which is what makes a from-scratch rebuild work.
+#   userdata/  -- the directory itself is absent. Anything already there is
+#                 live runtime state and is never a seeding candidate.
+
+- name: Fail fast on the superseded single-repo variable
+  # openhab_repo cloned conf/ and userdata/ into one tree and force-reset the
+  # lot on every run. Silently ignoring it would leave a consumer believing
+  # their config was being deployed when nothing was happening at all.
+  when: (openhab_repo | default('', true)) | length > 0
+  ansible.builtin.fail:
+    msg: >-
+      openhab_repo is superseded by openhab_conf_repo and openhab_state_repo,
+      which clone conf/ and userdata/ separately. See the role README.
+
+- name: Attribute host-side commits to the operator
+  # Commits made on the host by the operator (over SSH, as root) otherwise
+  # attribute to root@<host>. blockinfile, not a rewrite, so a hand-maintained
+  # gitconfig survives.
+  when:
+    - openhab_git_user_name | length > 0
+    - openhab_git_user_email | length > 0
+  ansible.builtin.blockinfile:
+    path: /root/.gitconfig
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} ANSIBLE openhab identity"
+    block: |
+      [user]
+      	name = {{ openhab_git_user_name }}
+      	email = {{ openhab_git_user_email }}
+
+- name: Allow root git operations on the service-owned trees
+  # git 2.35.2+ refuses to act as root on a working tree owned by another user
+  # ("dubious ownership"). Both trees are owned by the openHAB service user, so
+  # mark them safe for the operator's commits as root. The role's own git
+  # commands below carry the same exception on their command line instead, so
+  # they work before this block exists -- and in check mode, which only
+  # pretends to write it.
+  # One block per openhab_home: with a fixed marker, a second openHAB tree on
+  # the same host would overwrite the first one's entries on every run.
+  ansible.builtin.blockinfile:
+    path: /root/.gitconfig
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} ANSIBLE openhab safe.directory {{ openhab_home }}"
+    block: |
+      [safe]
+      	directory = {{ openhab_home }}/conf
+      	directory = {{ openhab_home }}/userdata
+
+- name: Stat the conf tree's .git (gate seeding)
+  ansible.builtin.stat:
+    path: "{{ openhab_home }}/conf/.git"
+  register: openhab_conf_dotgit
+
+- name: Stat the userdata directory (gate seeding)
+  ansible.builtin.stat:
+    path: "{{ openhab_home }}/userdata"
+  register: openhab_userdata_dir
+
+- name: Stat the userdata tree's .git (gate URL upkeep)
+  ansible.builtin.stat:
+    path: "{{ openhab_home }}/userdata/.git"
+  register: openhab_userdata_dotgit
+
+- name: Find the agent forwarded for this run (seeding only)
+  # A seed is the one time the role talks to the git server, and the role
+  # brings no credential of its own. An agent the operator forwards for a
+  # seeding run (ForwardAgent) lands in the connecting user's session, and
+  # become strips it, so read it from there and hand it to the seed. Ansible
+  # keeps that SSH connection open across tasks, so the socket outlives this
+  # task.
+  when: >-
+    (openhab_conf_repo | length > 0 and not openhab_conf_dotgit.stat.exists)
+    or (openhab_state_repo | length > 0 and not openhab_userdata_dir.stat.exists)
+  become: false
+  ansible.builtin.command:
+    cmd: printenv SSH_AUTH_SOCK
+  register: openhab_forwarded_agent
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Seed conf/ from the config repo (first deploy only)
+  # init+fetch+checkout rather than `git clone`: clone refuses a non-empty
+  # destination, and conf/ may already hold files the playbook pre-staged.
+  # This overlays the repo onto whatever is there. A seed that fails removes
+  # the .git it started, so the next run finds conf/ unseeded and tries again
+  # instead of taking an empty repository for a seeded one.
+  when:
+    - openhab_conf_repo | length > 0
+    - not openhab_conf_dotgit.stat.exists
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      branch={{ openhab_conf_repo_branch | quote }}
+      mkdir -p {{ (openhab_home ~ '/conf') | quote }}
+      cd {{ (openhab_home ~ '/conf') | quote }}
+      trap 'rm -rf .git' ERR
+      git init -q
+      git remote add origin {{ openhab_conf_repo | quote }}
+      git fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+      git checkout -q -f -B "$branch" --track "origin/$branch"
+    executable: /bin/bash
+  environment:
+    SSH_AUTH_SOCK: "{{ openhab_forwarded_agent.stdout | default('') }}"
+    # A seeding host meets the git server for the first time: record its key
+    # on first contact, and refuse a key that changes later. BatchMode: an
+    # agent that cannot authenticate fails the seed rather than prompting.
+    GIT_SSH_COMMAND: ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+  changed_when: true
+
+- name: Seed userdata/ from the state repo (only when the directory is absent)
+  # Deliberately gated on the directory, not on .git. A userdata/ that exists
+  # without a .git is a hand-built host carrying live runtime state -- thing
+  # status, jsondb, sessions -- and seeding it would overwrite exactly the
+  # data that has no other copy on the box.
+  # The tree is built beside userdata/ and moved into place as the last step,
+  # so a seed that fails leaves userdata/ absent and the next run tries again
+  # -- rather than starting openHAB on an empty userdata/ forever after.
+  when:
+    - openhab_state_repo | length > 0
+    - not openhab_userdata_dir.stat.exists
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      branch={{ openhab_state_repo_branch | quote }}
+      staging={{ (openhab_home ~ '/userdata.seeding') | quote }}
+      rm -rf "$staging"
+      mkdir -p "$staging"
+      cd "$staging"
+      trap 'rm -rf "$staging"' ERR
+      git init -q
+      git remote add origin {{ openhab_state_repo | quote }}
+      git fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+      git checkout -q -f -B "$branch" --track "origin/$branch"
+      cd /
+      mv "$staging" {{ (openhab_home ~ '/userdata') | quote }}
+    executable: /bin/bash
+  environment:
+    SSH_AUTH_SOCK: "{{ openhab_forwarded_agent.stdout | default('') }}"
+    GIT_SSH_COMMAND: ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+  changed_when: true
+
+- name: Read the origin URL of each tree that was already seeded  # noqa: command-instead-of-module
+  # URL upkeep only -- never a fetch. Safe on a live host because it cannot
+  # touch the working tree. The git module has no way to read or set a remote
+  # URL without also cloning or pulling, which is the one thing forbidden here,
+  # so bare `git remote` commands are the right tool. Gated on .git for both
+  # trees: a hand-built userdata/ without one has no remote to keep.
+  # -c safe.directory: root acting on a service-owned tree, see above.
+  when:
+    - item.repo | length > 0
+    - item.seeded
+  ansible.builtin.command:
+    cmd: >-
+      git -c safe.directory={{ openhab_home }}/{{ item.tree }}
+      -C {{ openhab_home }}/{{ item.tree }} remote get-url origin
+  loop:
+    - tree: conf
+      repo: "{{ openhab_conf_repo }}"
+      seeded: "{{ openhab_conf_dotgit.stat.exists }}"
+    - tree: userdata
+      repo: "{{ openhab_state_repo }}"
+      seeded: "{{ openhab_userdata_dotgit.stat.exists }}"
+  loop_control:
+    label: "{{ item.tree }}"
+  register: openhab_origin
+  changed_when: false
+  check_mode: false
+
+- name: Point a drifted origin back at its repository  # noqa: command-instead-of-module
+  # Reported as a change: a remote that moved is worth seeing in the recap.
+  when:
+    - item.stdout is defined
+    - item.stdout != item.item.repo
+  ansible.builtin.command:
+    cmd: >-
+      git -c safe.directory={{ openhab_home }}/{{ item.item.tree }}
+      -C {{ openhab_home }}/{{ item.item.tree }} remote set-url origin {{ item.item.repo }}
+  loop: "{{ openhab_origin.results }}"
+  loop_control:
+    label: "{{ item.item.tree }}"
+  changed_when: true

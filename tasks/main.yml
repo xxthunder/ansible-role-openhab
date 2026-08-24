@@ -4,9 +4,10 @@
 - name: Debug
   debug:
     msg: |
-      openhab_home = {{ openhab_home }}
-      repo = {{ openhab_repo }}
-      version = {{ openhab_version }}
+      openhab_home  = {{ openhab_home }}
+      conf repo     = {{ openhab_conf_repo | default('(unset)') }}
+      state repo    = {{ openhab_state_repo | default('(unset)') }}
+      version       = {{ openhab_version }}
 
 - name: "create user {{ openhab_user }} and add {{ system_user }} to group {{ openhab_user }}"
   include_role:
@@ -18,15 +19,13 @@
     create_home: False
     service: openHAB
 
-- name: "checkout / update openHAB config"
-  git:
-    accept_hostkey: yes
-    dest: "{{ openhab_home }}"
-    force: "{{ openhab_repo_force }}"
-    key_file: "/home/{{ system_user }}/.ssh/id_rsa"
-    repo: "{{ openhab_repo }}"
-    version: "{{ openhab_repo_branch }}"
-  when: openhab_repo | default(false) | bool
+# Seeds conf/ and userdata/ from their separate repos. Must run BEFORE the
+# folder-creation tasks below: userdata/ seeding is gated on that directory
+# being absent, and creating it first would suppress the seed on a genuinely
+# greenfield host.
+- name: "seed conf/ and userdata/ from their repositories"
+  include_tasks: git.yml
+  become: True
 
 - name: Create if necessary and set the permissions on the openHAB data folder
   file:
@@ -38,27 +37,13 @@
     recurse: yes
   become: True
 
-# openHAB docker image expects that certain folders exist, otherwise it will not start.
-# Since not all of them have to be versioned they might be missing from your repo, so
-# lets check and add them:
-- name: Create missing folders for repo exists
-  file:
-    path: "{{ item }}"
-    state: directory
-    owner: "{{ openhab_user }}"
-    group: "{{ openhab_user }}"
-    mode: u=rwX,g=rwX,o=
-  loop:
-    - "{{ openhab_home }}/userdata/cache"
-    - "{{ openhab_home }}/userdata/logs"
-    - "{{ openhab_home }}/userdata/persistence"
-    - "{{ openhab_home }}/userdata/tmp"
-  become: True
-  when: openhab_repo | default(false) | bool
-
-# In case of a fresh installation (means no repo) the three folders mapped
-# into the container have to exists, to be empty and to be owned by openhab
-- name: Create missing folders for a fresh installation
+# The openHAB image refuses to start unless these exist. The three mounted
+# directories are needed on every host; the userdata/ subdirectories are
+# transient and are gitignored out of the state repo, so they are missing after
+# a seed. One unconditional list covers both cases -- the previous pair of
+# mutually exclusive blocks keyed off whether a repo was configured, which is
+# no longer the distinction that matters.
+- name: Create the folders the container mounts and openHAB requires
   file:
     path: "{{ item }}"
     state: directory
@@ -69,8 +54,11 @@
     - "{{ openhab_home }}/addons"
     - "{{ openhab_home }}/conf"
     - "{{ openhab_home }}/userdata"
+    - "{{ openhab_home }}/userdata/cache"
+    - "{{ openhab_home }}/userdata/logs"
+    - "{{ openhab_home }}/userdata/persistence"
+    - "{{ openhab_home }}/userdata/tmp"
   become: True
-  when: not openhab_repo
 
 - name: Change ownership of openHAB configs
   file:

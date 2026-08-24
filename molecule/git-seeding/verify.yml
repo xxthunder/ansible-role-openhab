@@ -1,0 +1,197 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+
+  vars:
+    green: /opt/docker/openhab
+    dirty: /opt/docker/openhab-preseeded
+    retry: /opt/docker/openhab-retry
+    over_ssh: /opt/docker/openhab-ssh
+
+  tasks:
+    # --- Greenfield: both trees must be seeded from their remotes ---------
+
+    - name: Stat the greenfield trees
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: green_stat
+      loop:
+        - "{{ green }}/conf/.git"
+        - "{{ green }}/conf/FROM_REMOTE.txt"
+        - "{{ green }}/userdata/.git"
+        - "{{ green }}/userdata/FROM_REMOTE.txt"
+
+    - name: A greenfield host is seeded from both remotes
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "{{ item.item }} is missing — seeding did not run"
+      loop: "{{ green_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # --- Greenfield: a seeded tree is an ordinary clone -------------------
+    #
+    # Making new config live is a manual `git pull`, and state goes back with
+    # a manual `git push`; both need the branch to track its remote. The
+    # state repo's history holds the rollback points, so a seed is not shallow.
+
+    - name: Read the upstream of each seeded tree  # noqa: command-instead-of-module
+      # The git module cannot read tracking configuration.
+      ansible.builtin.command:
+        cmd: git -C {{ item }} rev-parse --abbrev-ref --symbolic-full-name @{u}
+      register: green_upstream
+      changed_when: false
+      failed_when: false
+      loop:
+        - "{{ green }}/conf"
+        - "{{ green }}/userdata"
+
+    - name: A seeded tree tracks its remote branch
+      ansible.builtin.assert:
+        that: item.stdout == 'origin/develop'
+        fail_msg: >-
+          {{ item.item }} tracks '{{ item.stdout }}' ({{ item.stderr }}),
+          expected origin/develop
+      loop: "{{ green_upstream.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Read whether each seeded tree is shallow  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: git -C {{ item }} rev-parse --is-shallow-repository
+      register: green_shallow
+      changed_when: false
+      loop:
+        - "{{ green }}/conf"
+        - "{{ green }}/userdata"
+
+    - name: A seeded tree carries the remote's full history
+      ansible.builtin.assert:
+        that: item.stdout == 'false'
+        fail_msg: "{{ item.item }} is a shallow clone"
+      loop: "{{ green_shallow.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # --- A seed over ssh uses the agent forwarded for the run -------------
+
+    - name: Stat the trees seeded over ssh
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: ssh_stat
+      loop:
+        - "{{ over_ssh }}/conf/FROM_REMOTE.txt"
+        - "{{ over_ssh }}/userdata/FROM_REMOTE.txt"
+
+    - name: A seed over ssh authenticates with the forwarded agent
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "{{ item.item }} is missing — the seed over ssh did not run through"
+      loop: "{{ ssh_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # --- A seed that failed is retried on the next run --------------------
+
+    - name: Stat the trees whose first seed failed
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: retry_stat
+      loop:
+        - "{{ retry }}/conf/FROM_REMOTE.txt"
+        - "{{ retry }}/userdata/FROM_REMOTE.txt"
+
+    - name: A failed seed left nothing behind, so the next run seeded the tree
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: >-
+          {{ item.item }} is missing — the failed seed left a tree behind that
+          the next run took for a seeded one
+      loop: "{{ retry_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # --- Already-seeded conf/: the working tree must be untouched ---------
+    #
+    # This is the criterion the whole substory exists for. A force-reset would
+    # restore LOCAL_EDIT.txt to "ORIGINAL" and pull FROM_REMOTE.txt in; both
+    # assertions below fail loudly if a fetch ever creeps back into this path.
+
+    - name: Read the local modification in the already-seeded conf tree
+      ansible.builtin.slurp:
+        src: "{{ dirty }}/conf/LOCAL_EDIT.txt"
+      register: local_edit
+
+    - name: An already-seeded conf/ keeps its local modification
+      ansible.builtin.assert:
+        that: (local_edit.content | b64decode).strip() == 'MODIFIED LOCALLY'
+        fail_msg: >-
+          conf/LOCAL_EDIT.txt was reset — the role fetched or force-checked-out
+          a tree it had already seeded.
+
+    - name: Stat the marker that only a fetch could have produced
+      ansible.builtin.stat:
+        path: "{{ dirty }}/conf/FROM_REMOTE.txt"
+      register: dirty_fetched
+
+    - name: An already-seeded conf/ is never fetched again
+      ansible.builtin.assert:
+        that: not dirty_fetched.stat.exists
+        fail_msg: >-
+          conf/FROM_REMOTE.txt appeared in an already-seeded tree — the role
+          fetched from the remote when it should only have corrected the URL.
+
+    # --- Already-seeded conf/: the origin URL IS corrected ----------------
+
+    - name: Read the corrected origin URL  # noqa: command-instead-of-module
+      # The git module cannot read a remote URL without cloning or pulling.
+      ansible.builtin.command:
+        cmd: git -C {{ dirty }}/conf remote get-url origin
+      register: dirty_origin
+      changed_when: false
+
+    - name: A drifted origin URL is corrected without touching the tree
+      ansible.builtin.assert:
+        that: dirty_origin.stdout == openhab_conf_repo
+        fail_msg: >-
+          origin is {{ dirty_origin.stdout }}, expected {{ openhab_conf_repo }}
+
+    # --- Existing userdata/: never seeded, never touched ------------------
+
+    - name: Stat the existing userdata tree
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: dirty_state
+      loop:
+        - "{{ dirty }}/userdata/LIVE_STATE.txt"
+        - "{{ dirty }}/userdata/.git"
+
+    - name: Live runtime state survives
+      ansible.builtin.assert:
+        that: dirty_state.results[0].stat.exists
+        fail_msg: userdata/LIVE_STATE.txt was destroyed
+
+    - name: An existing userdata/ is never seeded
+      ansible.builtin.assert:
+        that: not dirty_state.results[1].stat.exists
+        fail_msg: >-
+          userdata/.git exists — the role seeded a directory that was already
+          present, which is exactly the case that must be skipped.
+
+    # --- Operator identity ------------------------------------------------
+
+    - name: Read root's gitconfig
+      ansible.builtin.slurp:
+        src: /root/.gitconfig
+      register: gitconfig
+
+    - name: Commits attribute to the operator, and root may act on every tree
+      ansible.builtin.assert:
+        that:
+          - "'molecule@example.invalid' in (gitconfig.content | b64decode)"
+          - "'directory = ' + green + '/conf' in (gitconfig.content | b64decode)"
+          - "'directory = ' + green + '/userdata' in (gitconfig.content | b64decode)"
+          - "'directory = ' + dirty + '/conf' in (gitconfig.content | b64decode)"
+          - "'directory = ' + dirty + '/userdata' in (gitconfig.content | b64decode)"
+        fail_msg: /root/.gitconfig is missing the identity or safe.directory wiring
