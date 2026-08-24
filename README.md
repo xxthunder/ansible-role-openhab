@@ -20,7 +20,7 @@ This role will set up an openHAB server as Docker container and is heavily inspi
 ### It will
 - create an openHAB service account
 - add the system user to the openHAB service group
-- if exists: checkout the git repository with your openHAB configuration
+- if configured: seed `conf/` and `userdata/` from two separate git repositories
 - create missing folders & set permissions
 - pull the latest openHAB image and recreate the container if it changed
 
@@ -39,6 +39,7 @@ openhab_home: /opt/docker/openhab
 # Authentication has to be resolved beforehand, one option would be SSH Key 
 # Authentication.
 # Example: ssh://{{ system_user }}@git.example.com:port/path/to/repo/openhab.git
+# NOTE: superseded -- see "Two repositories" below.
 openhab_repo:
 # which branch?
 openhab_repo_branch: master
@@ -213,3 +214,90 @@ License
 -------
 
 MIT
+
+
+Two repositories: config and state
+----------------------------------
+
+openHAB's `openhab_home` holds two things with opposite ownership, and this
+role no longer treats them as one:
+
+| Variable | Seeds | Source of truth |
+| --- | --- | --- |
+| `openhab_conf_repo` | `{{ openhab_home }}/conf` | the repo |
+| `openhab_state_repo` | `{{ openhab_home }}/userdata` | the host |
+
+`conf/` is declarative automation — items, rules, scripts, sitemaps. `userdata/`
+is runtime state: thing status, jsondb, user sessions, and generated secrets
+that rotate on their own. A single repo forced them to share one policy, and
+`openhab_repo_force: yes` applied that policy to the whole tree, so every deploy
+discarded runtime state. **`openhab_repo`, `openhab_repo_branch` and
+`openhab_repo_force` are removed**; setting `openhab_repo` now fails the run
+with a pointer here rather than silently doing nothing.
+
+### Seed once, never fetch
+
+Both repositories are used only to *seed* an unseeded target. On a converged
+host the role does no fetch at all — it only corrects a drifted `origin` URL,
+which cannot touch the working tree. Consequences worth being explicit about:
+
+- **The host needs no git credential in steady state.** Nothing authenticates
+  to your git server on a normal run, so no private key belongs on the managed
+  host. (An earlier version of this role passed `key_file` pointing at one; that
+  is gone.)
+- **Publishing new config is a deliberate operator step** — a manual pull — not
+  something a deploy performs unannounced.
+- **A populated tree can never be reset.** There is no code path that does it.
+
+The two differ only in what counts as unseeded: `conf/` when it contains no
+`.git`, `userdata/` when the *directory itself* is absent. That asymmetry is the
+safety property — a `userdata/` that exists without a `.git` is a hand-built
+host carrying the only copy of its runtime state, and seeding it would overwrite
+exactly that.
+
+A seed that fails — an unreachable server, a missing branch — leaves nothing
+behind: `conf/` gets no `.git` and `userdata/` stays absent, so the next run
+tries again. A seed that succeeds is an ordinary clone, with the full history
+and its branch tracking `origin`, so the manual `git pull` and `git push` work
+as on any checkout.
+
+### What a seed needs
+
+A seed is the one time the role talks to your git server, and the role brings
+no credential of its own. Forward your SSH agent for the run that seeds:
+
+```sh
+ansible-playbook site.yml -e ansible_ssh_extra_args='-o ForwardAgent=yes'
+```
+
+`become` strips the forwarded agent from the environment, so the role picks it
+up from the connecting user's session and hands it to `git fetch`. The git
+server's host key is recorded on first contact and checked from then on
+(`StrictHostKeyChecking=accept-new`). Without an agent that the server accepts,
+the seed fails, leaves nothing behind, and is tried again on the next run.
+
+Routine deploys fetch nothing and need no forwarding. Leave it off for them:
+while a run lasts, root on the target can use a forwarded agent.
+
+`addons/` stays role-created and unversioned.
+
+### Operator identity
+
+`openhab_git_user_name` / `openhab_git_user_email` write a `[user]` block into
+`/root/.gitconfig` so host-side commits attribute to a person rather than
+`root@<host>`. The role also registers both trees under `[safe] directory`,
+without which git 2.35.2+ refuses to operate as root on a working tree owned by
+the service user. It does so before its first git command, so a host whose
+trees the service user already owns converges on the first run.
+
+### Testing
+
+`molecule/git-seeding` covers this wiring end to end against bare repositories
+created inside the container, so it needs no network, no git server and no
+credentials:
+
+```sh
+molecule test -s git-seeding
+```
+
+`molecule/default` remains rudimentary and is not part of this scenario.

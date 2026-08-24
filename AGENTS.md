@@ -109,7 +109,8 @@ build is never blessed as a version.
   `| length > 0`, and `null | length` raises rather than returning 0.
 - **Never reference a credential on the managed host.** The role authenticates
   to nothing in steady state; an earlier version passed `key_file` pointing at a
-  private key on the box, and that is precisely what was removed.
+  private key on the box, and that is precisely what was removed. A seed
+  authenticates with the agent the operator forwards for that one run.
 - **KISS / YAGNI.** No variable, wrapper or knob without a current backlog item
   needing it. One-time migration steps belong in the consumer's runbook, not in
   role logic that then runs forever.
