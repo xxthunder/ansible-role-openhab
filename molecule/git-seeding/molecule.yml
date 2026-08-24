@@ -1,0 +1,32 @@
+---
+# Focused scenario for the two-repo git wiring (HSH-057c).
+#
+# Deliberately narrow: it converges tasks/git.yml alone, never the whole role,
+# so it needs no docker-in-docker for the openHAB container and no Gitea. The
+# "remote" is a bare repo created inside the container, reached over file://,
+# which keeps the scenario hermetic -- no network, no credentials, nothing to
+# leak. molecule/default is left alone; repairing it is HSH-006's job.
+driver:
+  name: docker
+platforms:
+  - name: openhab-git-seeding
+    image: docker.io/pycontribs/debian:latest
+    pre_build_image: true
+provisioner:
+  name: ansible
+  playbooks:
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+  inventory:
+    host_vars:
+      openhab-git-seeding:
+        openhab_home: /opt/docker/openhab
+        openhab_conf_repo: "file:///srv/fake-remotes/conf.git"
+        openhab_conf_repo_branch: develop
+        openhab_state_repo: "file:///srv/fake-remotes/state.git"
+        openhab_state_repo_branch: develop
+        openhab_git_user_name: Molecule Operator
+        openhab_git_user_email: molecule@example.invalid
+verifier:
+  name: ansible

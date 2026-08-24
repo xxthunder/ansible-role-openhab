@@ -1,0 +1,111 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+
+  vars:
+    green: /opt/docker/openhab
+    dirty: /opt/docker/openhab-preseeded
+
+  tasks:
+    # --- Greenfield: both trees must be seeded from their remotes ---------
+
+    - name: Stat the greenfield trees
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: green_stat
+      loop:
+        - "{{ green }}/conf/.git"
+        - "{{ green }}/conf/FROM_REMOTE.txt"
+        - "{{ green }}/userdata/.git"
+        - "{{ green }}/userdata/FROM_REMOTE.txt"
+
+    - name: A greenfield host is seeded from both remotes
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "{{ item.item }} is missing — seeding did not run"
+      loop: "{{ green_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # --- Already-seeded conf/: the working tree must be untouched ---------
+    #
+    # This is the criterion the whole substory exists for. A force-reset would
+    # restore LOCAL_EDIT.txt to "ORIGINAL" and pull FROM_REMOTE.txt in; both
+    # assertions below fail loudly if a fetch ever creeps back into this path.
+
+    - name: Read the local modification in the already-seeded conf tree
+      ansible.builtin.slurp:
+        src: "{{ dirty }}/conf/LOCAL_EDIT.txt"
+      register: local_edit
+
+    - name: An already-seeded conf/ keeps its local modification
+      ansible.builtin.assert:
+        that: (local_edit.content | b64decode).strip() == 'MODIFIED LOCALLY'
+        fail_msg: >-
+          conf/LOCAL_EDIT.txt was reset — the role fetched or force-checked-out
+          a tree it had already seeded.
+
+    - name: Stat the marker that only a fetch could have produced
+      ansible.builtin.stat:
+        path: "{{ dirty }}/conf/FROM_REMOTE.txt"
+      register: dirty_fetched
+
+    - name: An already-seeded conf/ is never fetched again
+      ansible.builtin.assert:
+        that: not dirty_fetched.stat.exists
+        fail_msg: >-
+          conf/FROM_REMOTE.txt appeared in an already-seeded tree — the role
+          fetched from the remote when it should only have corrected the URL.
+
+    # --- Already-seeded conf/: the origin URL IS corrected ----------------
+
+    - name: Read the corrected origin URL  # noqa: command-instead-of-module
+      # The git module cannot read a remote URL without cloning or pulling.
+      ansible.builtin.command:
+        cmd: git -C {{ dirty }}/conf remote get-url origin
+      register: dirty_origin
+      changed_when: false
+
+    - name: A drifted origin URL is corrected without touching the tree
+      ansible.builtin.assert:
+        that: dirty_origin.stdout == openhab_conf_repo
+        fail_msg: >-
+          origin is {{ dirty_origin.stdout }}, expected {{ openhab_conf_repo }}
+
+    # --- Existing userdata/: never seeded, never touched ------------------
+
+    - name: Stat the existing userdata tree
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: dirty_state
+      loop:
+        - "{{ dirty }}/userdata/LIVE_STATE.txt"
+        - "{{ dirty }}/userdata/.git"
+
+    - name: Live runtime state survives
+      ansible.builtin.assert:
+        that: dirty_state.results[0].stat.exists
+        fail_msg: userdata/LIVE_STATE.txt was destroyed
+
+    - name: An existing userdata/ is never seeded
+      ansible.builtin.assert:
+        that: not dirty_state.results[1].stat.exists
+        fail_msg: >-
+          userdata/.git exists — the role seeded a directory that was already
+          present, which is exactly the case that must be skipped.
+
+    # --- Operator identity ------------------------------------------------
+
+    - name: Read root's gitconfig
+      ansible.builtin.slurp:
+        src: /root/.gitconfig
+      register: gitconfig
+
+    - name: Commits attribute to the operator, and root may act on both trees
+      ansible.builtin.assert:
+        that:
+          - "'molecule@example.invalid' in (gitconfig.content | b64decode)"
+          - "'directory = ' + green + '/conf' in (gitconfig.content | b64decode)"
+          - "'directory = ' + green + '/userdata' in (gitconfig.content | b64decode)"
+        fail_msg: /root/.gitconfig is missing the identity or safe.directory wiring

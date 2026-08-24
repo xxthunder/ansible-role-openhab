@@ -1,0 +1,22 @@
+---
+# Two converges against two different openhab_home trees, so one run covers
+# both halves of the contract: a greenfield host that must be seeded, and a
+# host already carrying live state that must be left alone.
+- name: Converge
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Seed a greenfield host
+      ansible.builtin.include_role:
+        name: openhab
+        tasks_from: git
+      vars:
+        openhab_home: /opt/docker/openhab
+
+    - name: Converge a host that already holds config and state
+      ansible.builtin.include_role:
+        name: openhab
+        tasks_from: git
+      vars:
+        openhab_home: /opt/docker/openhab-preseeded

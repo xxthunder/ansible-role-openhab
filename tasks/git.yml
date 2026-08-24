@@ -1,0 +1,142 @@
+---
+# Git wiring for openHAB's two repositories (HSH-057c).
+#
+# conf/ and userdata/ carry opposite ownership -- the repo is the source of
+# truth for config, the host is the source of truth for runtime state -- but
+# the role treats them the same way at runtime: it seeds a target that is not
+# yet seeded, and never touches one that is. Nothing here fetches on a
+# converged host, so the role needs no Gitea credential in steady state and
+# there is no code path that can reset a populated tree.
+#
+# Making new config live is a deliberate operator step (a manual pull), not
+# something a deploy does behind their back.
+#
+# The two repos differ only in what counts as "not yet seeded":
+#   conf/      -- no .git inside it. An empty or file-populated conf/ is fair
+#                 game, which is what makes a from-scratch rebuild work.
+#   userdata/  -- the directory itself is absent. Anything already there is
+#                 live runtime state and is never a seeding candidate.
+
+- name: Fail fast on the superseded single-repo variable
+  # openhab_repo cloned conf/ and userdata/ into one tree and force-reset the
+  # lot on every run. Silently ignoring it would leave a consumer believing
+  # their config was being deployed when nothing was happening at all.
+  when: openhab_repo is defined and openhab_repo
+  ansible.builtin.fail:
+    msg: >-
+      openhab_repo is superseded by openhab_conf_repo and openhab_state_repo,
+      which clone conf/ and userdata/ separately. See the role README.
+
+- name: Stat the conf tree's .git (gate seeding)
+  ansible.builtin.stat:
+    path: "{{ openhab_home }}/conf/.git"
+  register: openhab_conf_dotgit
+
+- name: Stat the userdata directory (gate seeding)
+  ansible.builtin.stat:
+    path: "{{ openhab_home }}/userdata"
+  register: openhab_userdata_dir
+
+- name: Seed conf/ from the config repo (first deploy only)
+  # init+fetch+checkout rather than `git clone`: clone refuses a non-empty
+  # destination, and conf/ may already hold files the playbook pre-staged.
+  # This overlays the repo onto whatever is there.
+  when:
+    - openhab_conf_repo | length > 0
+    - not openhab_conf_dotgit.stat.exists
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      mkdir -p {{ (openhab_home ~ '/conf') | quote }}
+      cd {{ (openhab_home ~ '/conf') | quote }}
+      git init -q
+      git remote add origin {{ openhab_conf_repo | quote }}
+      git fetch -q --depth 1 origin {{ openhab_conf_repo_branch | quote }}
+      git checkout -q -f -B {{ openhab_conf_repo_branch | quote }} FETCH_HEAD
+    executable: /bin/bash
+  changed_when: true
+
+- name: Seed userdata/ from the state repo (only when the directory is absent)
+  # Deliberately gated on the directory, not on .git. A userdata/ that exists
+  # without a .git is a hand-built host carrying live runtime state -- thing
+  # status, jsondb, sessions -- and seeding it would overwrite exactly the
+  # data that has no other copy on the box.
+  when:
+    - openhab_state_repo | length > 0
+    - not openhab_userdata_dir.stat.exists
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      mkdir -p {{ (openhab_home ~ '/userdata') | quote }}
+      cd {{ (openhab_home ~ '/userdata') | quote }}
+      git init -q
+      git remote add origin {{ openhab_state_repo | quote }}
+      git fetch -q --depth 1 origin {{ openhab_state_repo_branch | quote }}
+      git checkout -q -f -B {{ openhab_state_repo_branch | quote }} FETCH_HEAD
+    executable: /bin/bash
+  changed_when: true
+
+- name: Keep the conf remote pointed at the config repo  # noqa: command-instead-of-module
+  # URL upkeep only -- never a fetch. Safe on a live host because it cannot
+  # touch the working tree. The git module has no way to set a remote URL
+  # without also cloning or pulling, which is the one thing forbidden here, so
+  # a bare `git remote set-url` is the right tool.
+  when:
+    - openhab_conf_repo | length > 0
+    - openhab_conf_dotgit.stat.exists
+  ansible.builtin.command:
+    cmd: git -C {{ openhab_home }}/conf remote set-url origin {{ openhab_conf_repo }}
+  changed_when: false
+
+- name: Keep the userdata remote pointed at the state repo  # noqa: command-instead-of-module
+  # failed_when: false, unlike the conf equivalent above, and the asymmetry is
+  # deliberate. conf/ upkeep is gated on .git existing, so it only ever runs
+  # inside a real repository. userdata/ upkeep is gated on the *directory*
+  # existing, which is the correct seeding guard but says nothing about whether
+  # git is involved -- a hand-built host has a userdata/ with no .git at all.
+  # Tolerating that failure is right; adding a second stat to avoid it would
+  # buy nothing.
+  when:
+    - openhab_state_repo | length > 0
+    - openhab_userdata_dir.stat.exists
+  ansible.builtin.command:
+    cmd: git -C {{ openhab_home }}/userdata remote set-url origin {{ openhab_state_repo }}
+  changed_when: false
+  failed_when: false
+
+- name: Attribute host-side commits to the operator
+  # Commits made on the host by the operator (over SSH, as root) otherwise
+  # attribute to root@<host>. blockinfile, not a rewrite, so a hand-maintained
+  # gitconfig survives.
+  when:
+    - openhab_git_user_name | length > 0
+    - openhab_git_user_email | length > 0
+  ansible.builtin.blockinfile:
+    path: /root/.gitconfig
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} ANSIBLE openhab identity"
+    block: |
+      [user]
+      	name = {{ openhab_git_user_name }}
+      	email = {{ openhab_git_user_email }}
+
+- name: Allow root git operations on the service-owned trees
+  # git 2.35.2+ refuses to act as root on a working tree owned by another user
+  # ("dubious ownership"). Both trees are owned by the openHAB service user, so
+  # mark them safe for the operator's commits and for this role's own git tasks.
+  # One block per openhab_home: with a fixed marker, a second openHAB tree on
+  # the same host would overwrite the first one's entries on every run.
+  ansible.builtin.blockinfile:
+    path: /root/.gitconfig
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} ANSIBLE openhab safe.directory {{ openhab_home }}"
+    block: |
+      [safe]
+      	directory = {{ openhab_home }}/conf
+      	directory = {{ openhab_home }}/userdata

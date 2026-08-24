@@ -1,0 +1,94 @@
+---
+- name: Prepare
+  hosts: all
+  gather_facts: true
+
+  vars:
+    fake_remotes: /srv/fake-remotes
+
+  tasks:
+    - name: Install git
+      ansible.builtin.apt:
+        name: git
+        state: present
+        update_cache: true
+
+    # Two bare repos stand in for Gitea. Each is seeded from a work tree so it
+    # has a real commit on the branch the role will fetch -- an empty bare repo
+    # would make `fetch <branch>` fail for the wrong reason and mask a genuine
+    # regression.
+    - name: Create the fake remotes and their seed work trees
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ fake_remotes }}"
+        - /srv/seed/conf
+        - /srv/seed/state
+
+    - name: Write a marker file into each seed tree
+      ansible.builtin.copy:
+        dest: "/srv/seed/{{ item }}/FROM_REMOTE.txt"
+        content: "seeded from the {{ item }} remote\n"
+        mode: "0644"
+      loop:
+        - conf
+        - state
+
+    - name: Build the bare remotes from the seed trees
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          git init -q --bare {{ fake_remotes }}/{{ item }}.git
+          cd /srv/seed/{{ item }}
+          git init -q
+          git config user.email seed@example.invalid
+          git config user.name Seed
+          git checkout -q -B develop
+          git add -A
+          git commit -q -m "seed {{ item }}"
+          git remote add origin {{ fake_remotes }}/{{ item }}.git
+          git push -q origin develop
+        executable: /bin/bash
+        creates: "{{ fake_remotes }}/{{ item }}.git/HEAD"
+      loop:
+        - conf
+        - state
+
+    # --- Pre-existing state the role must NOT disturb ---------------------
+    #
+    # conf/ is already seeded (has .git) and carries a local modification.
+    # userdata/ exists but is NOT a git repo at all -- the shape a hand-built
+    # host is really in. Both must survive converge untouched.
+
+    - name: Pre-seed conf/ as an already-cloned tree with a local modification
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          mkdir -p /opt/docker/openhab-preseeded/conf
+          cd /opt/docker/openhab-preseeded/conf
+          git init -q
+          git config user.email pre@example.invalid
+          git config user.name Pre
+          git checkout -q -B develop
+          echo "ORIGINAL" > LOCAL_EDIT.txt
+          git add -A
+          git commit -q -m "pre-existing commit"
+          git remote add origin file:///srv/fake-remotes/WRONG-URL.git
+          echo "MODIFIED LOCALLY" > LOCAL_EDIT.txt
+        executable: /bin/bash
+        creates: /opt/docker/openhab-preseeded/conf/.git/HEAD
+
+    - name: Create the pre-seeded userdata/ directory
+      # copy does not create a missing parent directory.
+      ansible.builtin.file:
+        path: /opt/docker/openhab-preseeded/userdata
+        state: directory
+        mode: "0755"
+
+    - name: Pre-seed userdata/ as a plain directory holding live state
+      ansible.builtin.copy:
+        dest: /opt/docker/openhab-preseeded/userdata/LIVE_STATE.txt
+        content: "runtime state that predates the role\n"
+        mode: "0644"
