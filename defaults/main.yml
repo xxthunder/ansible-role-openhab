@@ -7,15 +7,26 @@ system_user: link
 openhab_uid: 9001
 # root directory of openhab data
 openhab_home: /opt/docker/openhab
-# openHAB config repository [optional]
-# Authentication has to be resolved beforehand, one option would be SSH Key 
-# Authentication.
-# Example: ssh://{{ system_user }}@git.example.com:port/path/to/repo/openhab.git
-openhab_repo:
-# which branch?
-openhab_repo_branch: master
-# should local changes be discarded?
-openhab_repo_force: yes
+# openHAB config repository [optional] -- seeds {{ openhab_home }}/conf.
+# The repo is the source of truth for config, but the role only seeds a conf/
+# that is not yet a git repo; it never fetches again. Making new config live is
+# a deliberate operator step, so the host needs no credential in steady state.
+# Example: git@git.example.com:group/openhab-conf.git
+openhab_conf_repo: ""
+openhab_conf_repo_branch: develop
+
+# openHAB state repository [optional] -- seeds {{ openhab_home }}/userdata,
+# and ONLY when that directory is absent. The host is the source of truth for
+# runtime state (thing status, jsondb, sessions); an existing userdata/ is
+# never reset, pulled, or overwritten.
+# Example: git@git.example.com:group/openhab-state.git
+openhab_state_repo: ""
+openhab_state_repo_branch: develop
+
+# Identity for commits made on the host by the operator. Without it they
+# attribute to root@<host>. Empty = leave /root/.gitconfig alone.
+openhab_git_user_name: ""
+openhab_git_user_email: ""
 # which openHAB version should be pulled from Docker?
 openhab_version: latest
 # Docker container hostname

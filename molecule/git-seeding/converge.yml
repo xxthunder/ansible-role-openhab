@@ -1,0 +1,127 @@
+---
+# One converge per case of the contract, each against its own openhab_home: a
+# greenfield host that must be seeded, a host already carrying live state that
+# must be left alone, a seed that fails and must be retried, a seed over ssh
+# through a forwarded agent, and the superseded single-repo variable.
+- name: Converge
+  hosts: all
+  gather_facts: true
+
+  vars:
+    role_under_test: openhab
+
+  tasks:
+    - name: A blank or null openhab_repo is not an error
+      ansible.builtin.include_role:
+        name: "{{ role_under_test }}"
+        tasks_from: git
+      vars:
+        openhab_home: /opt/docker/openhab-guard
+        openhab_conf_repo: ""
+        openhab_state_repo: ""
+        openhab_repo: "{{ openhab_repo_value }}"
+      loop:
+        - ""
+        - null
+      loop_control:
+        loop_var: openhab_repo_value
+
+    - name: A set openhab_repo fails the run with a pointer to its successors
+      block:
+        - name: Converge with the superseded variable set
+          ansible.builtin.include_role:
+            name: "{{ role_under_test }}"
+            tasks_from: git
+          vars:
+            openhab_home: /opt/docker/openhab-guard
+            openhab_repo: file:///srv/fake-remotes/conf.git
+
+        - name: Not reached while the guard works
+          ansible.builtin.fail:
+            msg: openhab_repo was set and the role carried on
+
+      rescue:
+        - name: The run failed on the guard, not on something else
+          ansible.builtin.assert:
+            that: "'superseded by openhab_conf_repo' in ansible_failed_result.msg"
+            fail_msg: "{{ ansible_failed_result.msg }}"
+
+    - name: Seed a greenfield host
+      ansible.builtin.include_role:
+        name: "{{ role_under_test }}"
+        tasks_from: git
+      vars:
+        openhab_home: /opt/docker/openhab
+
+    - name: Converge a host that already holds config and state
+      ansible.builtin.include_role:
+        name: "{{ role_under_test }}"
+        tasks_from: git
+      vars:
+        openhab_home: /opt/docker/openhab-preseeded
+
+    # A seed whose fetch fails must leave nothing behind, or the next run takes
+    # the half-built tree for a seeded one and never tries again. The "late"
+    # remotes do not exist until after the first attempts; on the idempotence
+    # run both trees are seeded, so nothing is attempted twice.
+    - name: A failed conf/ seed leaves no trace
+      block:
+        - name: Seed conf/ from a remote that does not exist yet
+          ansible.builtin.include_role:
+            name: "{{ role_under_test }}"
+            tasks_from: git
+          vars:
+            openhab_home: /opt/docker/openhab-retry
+            openhab_conf_repo: file:///srv/fake-remotes/late-conf.git
+            openhab_state_repo: ""
+      rescue:
+        - name: The conf/ seed failed, as it must on the first converge
+          ansible.builtin.debug:
+            msg: "{{ ansible_failed_result.msg | default('seed failed') }}"
+
+    - name: A failed userdata/ seed leaves no trace
+      block:
+        - name: Seed userdata/ from a remote that does not exist yet
+          ansible.builtin.include_role:
+            name: "{{ role_under_test }}"
+            tasks_from: git
+          vars:
+            openhab_home: /opt/docker/openhab-retry
+            openhab_conf_repo: ""
+            openhab_state_repo: file:///srv/fake-remotes/late-state.git
+      rescue:
+        - name: The userdata/ seed failed, as it must on the first converge
+          ansible.builtin.debug:
+            msg: "{{ ansible_failed_result.msg | default('seed failed') }}"
+
+    - name: Bring the late remotes up
+      ansible.builtin.copy:
+        src: "/srv/fake-remotes/{{ item }}.git/"
+        dest: "/srv/fake-remotes/late-{{ item }}.git"
+        remote_src: true
+        mode: preserve
+      loop:
+        - conf
+        - state
+
+    - name: Seed over ssh with the operator's forwarded agent
+      # With become, as on a real host: it strips SSH_AUTH_SOCK, so the role
+      # has to find the forwarded agent itself.
+      ansible.builtin.include_role:
+        name: "{{ role_under_test }}"
+        tasks_from: git
+        apply:
+          become: true
+      vars:
+        openhab_home: /opt/docker/openhab-ssh
+        openhab_conf_repo: git@localhost:conf.git
+        openhab_state_repo: git@localhost:state.git
+
+    - name: Seed again, now that the remotes exist
+      ansible.builtin.include_role:
+        name: "{{ role_under_test }}"
+        tasks_from: git
+      vars:
+        openhab_home: /opt/docker/openhab-retry
+        openhab_conf_repo: file:///srv/fake-remotes/late-conf.git
+        openhab_state_repo: file:///srv/fake-remotes/late-state.git

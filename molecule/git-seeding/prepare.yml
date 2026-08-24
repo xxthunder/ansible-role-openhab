@@ -1,0 +1,148 @@
+---
+- name: Prepare
+  hosts: all
+  gather_facts: true
+
+  vars:
+    fake_remotes: /srv/fake-remotes
+    forwarded_agent: /tmp/forwarded-agent.sock
+
+  tasks:
+    - name: Install git, and sshd and sudo for the ssh remote
+      ansible.builtin.apt:
+        name:
+          - git
+          - openssh-server
+          - sudo
+        state: present
+        update_cache: true
+
+    # Two bare repos stand in for Gitea. Each is seeded from a work tree so it
+    # has a real commit on the branch the role will fetch -- an empty bare repo
+    # would make `fetch <branch>` fail for the wrong reason and mask a genuine
+    # regression.
+    - name: Create the fake remotes and their seed work trees
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ fake_remotes }}"
+        - /srv/seed/conf
+        - /srv/seed/state
+
+    - name: Write a marker file into each seed tree
+      ansible.builtin.copy:
+        dest: "/srv/seed/{{ item }}/FROM_REMOTE.txt"
+        content: "seeded from the {{ item }} remote\n"
+        mode: "0644"
+      loop:
+        - conf
+        - state
+
+    - name: Build the bare remotes from the seed trees
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          git init -q --bare {{ fake_remotes }}/{{ item }}.git
+          cd /srv/seed/{{ item }}
+          git init -q
+          git config user.email seed@example.invalid
+          git config user.name Seed
+          git checkout -q -B develop
+          git add -A
+          git commit -q -m "seed {{ item }}"
+          # A second commit, so that a shallow seed is visible as one.
+          echo "history" > HISTORY.txt
+          git add -A
+          git commit -q -m "history for {{ item }}"
+          git remote add origin {{ fake_remotes }}/{{ item }}.git
+          git push -q origin develop
+        executable: /bin/bash
+        creates: "{{ fake_remotes }}/{{ item }}.git/HEAD"
+      loop:
+        - conf
+        - state
+
+    # --- An ssh remote that only a forwarded agent can reach -------------
+    #
+    # Stands in for a git server the operator reaches with a key held in their
+    # SSH agent. The agent's socket is what molecule.yml passes into every
+    # command, as ForwardAgent does; become strips it. The key file is deleted
+    # once the agent holds the key, and root has no key and no known_hosts
+    # entry of its own, so a seed that succeeds can only have used the agent.
+
+    - name: Create the user that serves the ssh remotes
+      ansible.builtin.user:
+        name: git
+        home: /srv/git
+        shell: /usr/bin/git-shell
+        password: "*"
+
+    - name: Serve the remotes over ssh, with the only key in an agent
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          for repo in conf state; do
+            git clone -q --bare {{ fake_remotes }}/$repo.git /srv/git/$repo.git
+          done
+          mkdir -p /srv/agent-key /srv/git/.ssh /run/sshd
+          ssh-keygen -q -t ed25519 -N '' -f /srv/agent-key/id
+          install -m 0600 /srv/agent-key/id.pub /srv/git/.ssh/authorized_keys
+          chown -R git:git /srv/git
+          /usr/sbin/sshd </dev/null >/dev/null 2>&1
+          ssh-agent -a {{ forwarded_agent }} </dev/null >/dev/null 2>&1
+          SSH_AUTH_SOCK={{ forwarded_agent }} ssh-add -q /srv/agent-key/id
+          rm -rf /srv/agent-key
+        executable: /bin/bash
+        creates: "{{ forwarded_agent }}"
+
+    # --- Pre-existing state the role must NOT disturb ---------------------
+    #
+    # conf/ is already seeded (has .git) and carries a local modification.
+    # userdata/ exists but is NOT a git repo at all -- the shape a hand-built
+    # host is really in. Both must survive converge untouched.
+
+    - name: Pre-seed conf/ as an already-cloned tree with a local modification
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          mkdir -p /opt/docker/openhab-preseeded/conf
+          cd /opt/docker/openhab-preseeded/conf
+          git init -q
+          git config user.email pre@example.invalid
+          git config user.name Pre
+          git checkout -q -B develop
+          echo "ORIGINAL" > LOCAL_EDIT.txt
+          git add -A
+          git commit -q -m "pre-existing commit"
+          git remote add origin file:///srv/fake-remotes/WRONG-URL.git
+          echo "MODIFIED LOCALLY" > LOCAL_EDIT.txt
+        executable: /bin/bash
+        creates: /opt/docker/openhab-preseeded/conf/.git/HEAD
+
+    - name: Create the pre-seeded userdata/ directory
+      # copy does not create a missing parent directory.
+      ansible.builtin.file:
+        path: /opt/docker/openhab-preseeded/userdata
+        state: directory
+        mode: "0755"
+
+    - name: Pre-seed userdata/ as a plain directory holding live state
+      ansible.builtin.copy:
+        dest: /opt/docker/openhab-preseeded/userdata/LIVE_STATE.txt
+        content: "runtime state that predates the role\n"
+        mode: "0644"
+
+    - name: Hand the pre-seeded trees to the service account, as on a real host
+      # The role runs git as root, and git refuses to act as root on a tree
+      # another user owns unless /root/.gitconfig marks it safe. A root-owned
+      # tree would hide that, so this is what proves the safe.directory wiring
+      # is in place before the role's first git command.
+      ansible.builtin.file:
+        path: /opt/docker/openhab-preseeded
+        state: directory
+        owner: "9001"
+        group: "9001"
+        mode: u=rwX,g=rwX,o=
+        recurse: true
