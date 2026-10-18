@@ -1,0 +1,18 @@
+---
+# Collections the role and its tests need. The consuming project installs what
+# the role needs itself; scripts/test.sh installs everything here for
+# ansible-lint and Molecule.
+#
+# Pinned exactly, like the Python toolchain in uv.lock: Galaxy has no lockfile,
+# so an unpinned entry is whatever is newest on the day of the run, and a run
+# today and a run next month would test against different collections. Bump
+# deliberately.
+collections:
+  # community.docker.docker_container runs openHAB, and Molecule's docker
+  # driver needs the collection too.
+  - name: community.docker
+    version: "5.2.0"
+  # Molecule's docker driver uses ansible.posix in its create playbook. The
+  # scenario has no dependency step to pull it in, so it is listed here.
+  - name: ansible.posix
+    version: "2.2.0"
