@@ -1,0 +1,80 @@
+---
+# Role argument spec for openhab. Validated at role start, so a missing or
+# mistyped variable fails fast. This is the role's complete variable surface;
+# the values live in defaults/main.yml and are not restated here, to avoid
+# drift. See README.md for the full picture.
+
+argument_specs:
+  main:
+    short_description: openHAB as a Docker container, seeded from a config and a state repository.
+    description:
+      - Creates the openHAB service account, seeds conf/ and userdata/ from two
+        optional git repositories without ever resetting a populated tree, and
+        runs the official openHAB image with host networking.
+    options:
+
+      openhab_operator_user_name:
+        type: str
+        description:
+          - Existing login user on the host, added to the service account's
+            group so it can edit conf/ without sudo.
+
+      openhab_service_user_uid:
+        type: int
+        description:
+          - UID and GID of the openHAB service account, which owns the tree.
+            openHAB in the container runs as the same IDs.
+
+      openhab_home:
+        type: path
+        description:
+          - Root directory holding conf/, userdata/ and addons/.
+
+      openhab_conf_repo:
+        type: str
+        description:
+          - Git URL that seeds conf/ when it holds no .git. Empty disables
+            conf/ seeding. Never fetched on a seeded host.
+
+      openhab_conf_repo_branch:
+        type: str
+        description:
+          - Branch checked out when conf/ is seeded.
+
+      openhab_state_repo:
+        type: str
+        description:
+          - Git URL that seeds userdata/, only when the directory is absent. Its
+            root is the content of userdata/. Empty disables userdata/ seeding.
+
+      openhab_state_repo_branch:
+        type: str
+        description:
+          - Branch checked out when userdata/ is seeded.
+
+      openhab_git_user_name:
+        type: str
+        description:
+          - Name written to /root/.gitconfig for commits made on the host. Empty
+            leaves the [user] block alone.
+
+      openhab_git_user_email:
+        type: str
+        description:
+          - Email written to /root/.gitconfig for commits made on the host.
+            Empty leaves the [user] block alone.
+
+      openhab_version:
+        type: str
+        description:
+          - Tag of the openhab/openhab image.
+
+      openhab_hostname:
+        type: str
+        description:
+          - Hostname of the openHAB container.
+
+      openhab_timezone:
+        type: str
+        description:
+          - Time zone passed to the JVM, as a tz database name.

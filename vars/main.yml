@@ -3,5 +3,6 @@
 # It should not be necessary to change / override any of the variables defined here
 # Variables which should be customized are under ../defaults/main
 
-# openhab user
-openhab_user: openhab
+# Name of the openHAB service account, which owns the tree. Its UID and GID are
+# openhab_service_user_uid in ../defaults/main.yml.
+openhab_service_user_name: openhab
