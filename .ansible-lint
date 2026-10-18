@@ -1,0 +1,17 @@
+---
+# ansible-lint config for the standalone openhab role.
+# role-name: Galaxy allows the bare name. schema: older-style task warnings,
+# intentionally deferred, as in the author's other roles.
+skip_list:
+  - role-name
+  - schema
+
+# The role includes create-service-account, which the consuming project
+# provides (see README → Requirements). It is not part of this repo.
+mock_roles:
+  - create-service-account
+
+exclude_paths:
+  - .venv/
+  - .ansible/
+  - .github/
