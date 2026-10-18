@@ -1,0 +1,7 @@
+---
+# Collections the role needs. The consuming project installs them itself;
+# scripts/test.sh installs them from here for ansible-lint and Molecule.
+collections:
+  # community.docker.docker_container runs openHAB, and Molecule's docker
+  # driver needs the collection too.
+  - name: community.docker

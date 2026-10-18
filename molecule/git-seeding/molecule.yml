@@ -1,19 +1,26 @@
 ---
-# Focused scenario for the two-repo git wiring (HSH-057c).
+# Focused scenario for the two-repo git wiring (ARO-002).
 #
 # Deliberately narrow: it converges tasks/git.yml alone, never the whole role,
-# so it needs no docker-in-docker for the openHAB container and no Gitea. The
-# "remote" is a bare repo created inside the container, reached over file://,
-# which keeps the scenario hermetic -- no network, no credentials, nothing to
-# leak. molecule/default is left alone; repairing it is HSH-006's job.
+# so it needs no docker-in-docker for the openHAB container and no git server.
+# The "remote" is a bare repo created inside the container, reached over
+# file://, which keeps the scenario hermetic -- no network, no credentials,
+# nothing to leak.
+#
+# The image is pinned by digest, not by a moving tag, so a run today and a run
+# next month test the same base system. Bump it deliberately.
 driver:
   name: docker
 platforms:
   - name: openhab-git-seeding
-    image: docker.io/pycontribs/debian:latest
+    image: geerlingguy/docker-debian12-ansible@sha256:43b3f59882ccc0ba5deb3b3ecac727084bb082a3230b5258c500395694b5497f
     pre_build_image: true
 provisioner:
   name: ansible
+  env:
+    # The checkout is the role, named after its directory (converge.yml), so
+    # its parent goes on the roles path.
+    ANSIBLE_ROLES_PATH: "${MOLECULE_PROJECT_DIRECTORY}/.."
   playbooks:
     prepare: prepare.yml
     converge: converge.yml

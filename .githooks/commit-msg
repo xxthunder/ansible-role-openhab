@@ -2,7 +2,7 @@
 
 # Conventional commit message hook with backlog item reference enforcement
 # Format: <type>(<optional scope>): <description> (PREFIX-###[<letter>])
-# The optional lowercase letter suffix denotes a substory (e.g. HSH-028a).
+# The optional lowercase letter suffix denotes a substory (e.g. ARO-002a).
 
 commit_msg_file="$1"
 commit_msg=$(head -n 1 "$commit_msg_file")

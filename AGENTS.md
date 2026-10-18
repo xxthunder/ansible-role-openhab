@@ -58,36 +58,32 @@ developed on a short-lived feature branch and merged to `main` fast-forward only
 
 ## Testing
 
-Molecule is the test harness, and it needs Docker, which the consuming
-project's devcontainer does not provide. Until this repo has its own
-devcontainer ([ARO-001](docs/backlog/aro-001.md)), run scenarios on any
-Docker-capable host:
+**`scripts/test.sh` is the single entry point** — the same run on a laptop, on
+any Docker host and in CI. It needs only `uv` and a Docker daemon the user can
+reach; `pyproject.toml` and `uv.lock` pin the whole toolchain (ansible-core,
+ansible-lint, yamllint, Molecule), and `requirements.yml` lists the collections.
 
 ```sh
-molecule test -s git-seeding
+scripts/test.sh        # yamllint, ansible-lint, then every Molecule scenario
+scripts/test.sh lint   # the static checks only
 ```
 
 **`molecule/git-seeding`** covers the two-repo seeding contract against bare
 repositories created inside the container, so it needs no network, no git
 server and no credentials. It converges `tasks/git.yml` alone — never the whole
-role — so it needs no docker-in-docker for the openHAB container.
+role — so it needs no docker-in-docker for the openHAB container. Its image is
+pinned by digest.
 
 There is no full-role scenario: the openHAB container start is verified on a
 real host at the release-candidate step ([ARO-003](docs/backlog/aro-003.md)).
 A new scenario is focused on one concern and asserts something that fails when
 that concern breaks.
 
-Static checks — always available, never sufficient:
-
-```sh
-yamllint -c .yamllint tasks/ defaults/ molecule/
-ansible-lint
-```
-
 `ansible-lint` is deliberately **not** in `.claude/settings.json`'s deny list.
 The consumer repo denies the whole `ansible*` glob to protect a vault; this repo
 has no vault, and linting a role is exactly the kind of thing an agent should be
-able to do here. Playbook execution against real infrastructure stays denied.
+able to do here. Playbook execution against real infrastructure stays denied —
+and an operator's own agent policy may be stricter than this file.
 
 ## Releasing — RC first, then promote
 
