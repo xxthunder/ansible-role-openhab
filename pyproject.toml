@@ -1,0 +1,15 @@
+[project]
+name = "ansible-role-openhab"
+version = "0.0.0"
+description = "Test toolchain for the openHAB Ansible role; not a Python package."
+requires-python = ">=3.12"
+dependencies = [
+    "ansible-core>=2.17,<2.21",
+    "ansible-lint>=25.1",
+    "molecule>=25.1",
+    "molecule-plugins[docker]>=23.7",
+    "yamllint>=1.35",
+]
+
+[tool.uv]
+package = false
