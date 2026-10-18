@@ -1,50 +1,49 @@
 ---
 # tasks file for openhab
 
-- name: Debug
-  debug:
+- name: Show the deployment parameters
+  ansible.builtin.debug:
     msg: |
       openhab_home  = {{ openhab_home }}
       conf repo     = {{ openhab_conf_repo | default('(unset)') }}
       state repo    = {{ openhab_state_repo | default('(unset)') }}
       version       = {{ openhab_version }}
 
-- name: "create user {{ openhab_user }} and add {{ system_user }} to group {{ openhab_user }}"
-  include_role:
+- name: Create the openHAB service account and add the system user to its group
+  ansible.builtin.include_role:
     name: create-service-account
   vars:
     uid: "{{ openhab_uid }}"
     gid: "{{ openhab_uid }}"
     service_user: "{{ openhab_user }}"
-    create_home: False
+    system_user: "{{ openhab_system_user }}"
+    create_home: false
     service: openHAB
 
 # Seeds conf/ and userdata/ from their separate repos. Must run BEFORE the
 # folder-creation tasks below: userdata/ seeding is gated on that directory
 # being absent, and creating it first would suppress the seed on a genuinely
 # greenfield host.
-- name: "seed conf/ and userdata/ from their repositories"
-  include_tasks: git.yml
-  become: True
+- name: Seed conf/ and userdata/ from their repositories
+  ansible.builtin.include_tasks: git.yml
+  become: true
 
 - name: Create if necessary and set the permissions on the openHAB data folder
-  file:
+  ansible.builtin.file:
     path: "{{ openhab_home }}"
     state: directory
     owner: "{{ openhab_user }}"
     group: "{{ openhab_user }}"
     mode: u=rwX,g=rwX,o=
-    recurse: yes
-  become: True
+    recurse: true
+  become: true
 
 # The openHAB image refuses to start unless these exist. The three mounted
 # directories are needed on every host; the userdata/ subdirectories are
 # transient and are gitignored out of the state repo, so they are missing after
-# a seed. One unconditional list covers both cases -- the previous pair of
-# mutually exclusive blocks keyed off whether a repo was configured, which is
-# no longer the distinction that matters.
+# a seed. One unconditional list covers both cases.
 - name: Create the folders the container mounts and openHAB requires
-  file:
+  ansible.builtin.file:
     path: "{{ item }}"
     state: directory
     owner: "{{ openhab_user }}"
@@ -58,45 +57,45 @@
     - "{{ openhab_home }}/userdata/logs"
     - "{{ openhab_home }}/userdata/persistence"
     - "{{ openhab_home }}/userdata/tmp"
-  become: True
+  become: true
 
-- name: Change ownership of openHAB configs
-  file:
+- name: Change ownership of the openHAB tree
+  ansible.builtin.file:
     path: "{{ openhab_home }}"
     owner: "{{ openhab_user }}"
     group: "{{ openhab_user }}"
-    recurse: yes
-  become: True
+    recurse: true
+  become: true
 
 - name: See if config is already present
-  stat:
+  ansible.builtin.stat:
     path: "{{ openhab_home }}/userdata/etc/version.properties"
-  register: conf_present
+  register: openhab_version_file
 
 - name: Check the current version of openHAB
-  shell: grep openhab-distro {{ openhab_home }}/userdata/etc/version.properties | cut -d ' ' -f 4
-  register: old_version
-  when: conf_present.stat.exists
-  changed_when: False
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      grep openhab-distro {{ (openhab_home ~ '/userdata/etc/version.properties') | quote }} | cut -d ' ' -f 4
+    executable: /bin/bash
+  register: openhab_old_version
+  when: openhab_version_file.stat.exists
+  changed_when: false
 
 - name: Pull/update the openHAB docker image
   tags: openhab
-  docker_container:
+  community.docker.docker_container:
     name: openhab
     image: openhab/openhab:{{ openhab_version }}
     hostname: "{{ openhab_hostname }}"
     state: started
-    pull: yes
-    detach: yes
+    pull: true
+    detach: true
     restart_policy: unless-stopped
     network_mode: host
-    # This breaks some functionality of Shelly Gen1 devices
-    # and VS Code openHAB extension
-    # ports:
-    #   # UI/REST
-    #   - "8443:8443"
-    #   # Language Server
-    #   - "5007:5007"
+    # Host networking rather than published ports: port mapping breaks some
+    # functionality of Shelly Gen1 devices and of the VS Code openHAB extension
+    # (UI/REST on 8443, the language server on 5007).
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
@@ -112,9 +111,4 @@
       EXTRA_JAVA_OPTS: >
         -Duser.timezone={{ openhab_timezone }}
         -Djava.net.preferIPv4Stack=true
-#        -Dcom.sun.management.jmxremote
-#        -Dcom.sun.management.jmxremote.port=8686
-#        -Dcom.sun.management.jmxremote.authenticate=false
-#        -Dcom.sun.management.jmxremote.ssl=false
-#        -Djava.rmi.server.hostname={{ ansible_default_ipv4.address }}
   register: openhab_pulled

@@ -1,0 +1,29 @@
+---
+name: CI
+"on":
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: lint and scenarios
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the codebase
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      # The same entry point a developer runs locally; this workflow defines
+      # no command of its own.
+      - name: Run the test suite
+        run: scripts/test.sh
+        env:
+          ANSIBLE_FORCE_COLOR: "1"
+          PY_COLORS: "1"
