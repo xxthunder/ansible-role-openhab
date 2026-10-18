@@ -1,11 +1,11 @@
 ---
-# Git wiring for openHAB's two repositories (HSH-057c).
+# Git wiring for openHAB's two repositories (ARO-002).
 #
 # conf/ and userdata/ carry opposite ownership -- the repo is the source of
 # truth for config, the host is the source of truth for runtime state -- but
 # the role treats them the same way at runtime: it seeds a target that is not
 # yet seeded, and never touches one that is. Nothing here fetches on a
-# converged host, so the role needs no Gitea credential in steady state and
+# converged host, so the role needs no git credential in steady state and
 # there is no code path that can reset a populated tree.
 #
 # Making new config live is a deliberate operator step (a manual pull), not

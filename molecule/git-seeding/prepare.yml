@@ -17,7 +17,7 @@
         state: present
         update_cache: true
 
-    # Two bare repos stand in for Gitea. Each is seeded from a work tree so it
+    # Two bare repos stand in for the git server. Each is seeded from a work tree so it
     # has a real commit on the branch the role will fetch -- an empty bare repo
     # would make `fetch <branch>` fail for the wrong reason and mask a genuine
     # regression.
