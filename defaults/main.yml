@@ -1,16 +1,19 @@
 ---
 # defaults file for openhab
 
-# to be added to the openhab user group
-system_user: link
-# openhab user ID
+# Existing user on the host to add to the openHAB service group, so it can
+# edit conf/ and read userdata/ without sudo.
+openhab_system_user: link
+# UID and GID of the openHAB service account.
 openhab_uid: 9001
-# root directory of openhab data
+# Root directory of the openHAB data: conf/, userdata/ and addons/ live here.
 openhab_home: /opt/docker/openhab
+
 # openHAB config repository [optional] -- seeds {{ openhab_home }}/conf.
 # The repo is the source of truth for config, but the role only seeds a conf/
 # that is not yet a git repo; it never fetches again. Making new config live is
 # a deliberate operator step, so the host needs no credential in steady state.
+# Empty = no conf/ seeding.
 # Example: git@git.example.com:group/openhab-conf.git
 openhab_conf_repo: ""
 openhab_conf_repo_branch: develop
@@ -18,18 +21,20 @@ openhab_conf_repo_branch: develop
 # openHAB state repository [optional] -- seeds {{ openhab_home }}/userdata,
 # and ONLY when that directory is absent. The host is the source of truth for
 # runtime state (thing status, jsondb, sessions); an existing userdata/ is
-# never reset, pulled, or overwritten.
+# never reset, pulled, or overwritten. The repo's root is the content of
+# userdata/. Empty = no userdata/ seeding.
 # Example: git@git.example.com:group/openhab-state.git
 openhab_state_repo: ""
 openhab_state_repo_branch: develop
 
 # Identity for commits made on the host by the operator. Without it they
-# attribute to root@<host>. Empty = leave /root/.gitconfig alone.
+# attribute to root@<host>. Either empty = leave /root/.gitconfig's [user] alone.
 openhab_git_user_name: ""
 openhab_git_user_email: ""
-# which openHAB version should be pulled from Docker?
+
+# openHAB image tag on Docker Hub (openhab/openhab).
 openhab_version: latest
-# Docker container hostname
+# Docker container hostname.
 openhab_hostname: openhab
-# TimeZone: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+# Time zone: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 openhab_timezone: Europe/Berlin

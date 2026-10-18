@@ -1,226 +1,73 @@
-openhab
-=========
+# Ansible Role: openhab
+
+[![CI](https://github.com/xxthunder/ansible-role-openhab/actions/workflows/test.yml/badge.svg)](https://github.com/xxthunder/ansible-role-openhab/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Ansible](https://img.shields.io/badge/Ansible-2.17%2B-blue.svg)](https://docs.ansible.com/)
+[![ansible-lint](https://img.shields.io/badge/ansible--lint-passing-brightgreen.svg)](https://ansible.readthedocs.io/projects/lint/)
+
+Run [openHAB](https://www.openhab.org) as a Docker container on Debian, and seed
+its configuration and runtime state from two optional git repositories — without
+any code path that could reset a populated tree.
+
+The role
+
+- creates the openHAB service account and adds a host user to its group,
+- seeds `conf/` and `userdata/` from separate repositories, once (see
+  [Two repositories](#two-repositories-config-and-state)),
+- creates the folders the openHAB image needs and sets their ownership,
+- pulls the requested `openhab/openhab` image and recreates the container if it
+  changed, with host networking.
 
 > **Lineage.** This repository began as a fork of
-> [`fex01/ansible-openhab`](https://github.com/fex01/ansible-openhab) and has
-> permanently diverged: it is maintained under `xxthunder` on its own release
-> lineage and does not track upstream. Attribution to the original author, and
-> to rkoshak's post below, stands — this note is about lineage, not credit.
+> [`fex01/ansible-openhab`](https://github.com/fex01/ansible-openhab), inspired by
+> [rkoshak](https://github.com/rkoshak)'s post
+> [Ansible Revisited](https://community.openhab.org/t/ansible-revisited/105754) in
+> the openHAB community. It has permanently diverged: it is maintained under
+> `xxthunder` on its own release line and does not track upstream. Attribution
+> stands — this note is about lineage, not credit.
 >
-> Development conventions, testing and the release process are in
-> [AGENTS.md](AGENTS.md); work is tracked in [docs/backlog/](docs/backlog/).
+> Development conventions and the release process are in [AGENTS.md](AGENTS.md);
+> work is tracked in [docs/backlog/](docs/backlog/).
 
+## Requirements
 
-This role will set up an openHAB server as Docker container and is heavily inspired by [rkoshak](https://github.com/rkoshak)s post [Ansible Revisited](https://community.openhab.org/t/ansible-revisited/105754) in the [openHAB community](https://community.openhab.org).
+- Debian 12 (bookworm) or 13 (trixie) with Docker and git installed.
+- The `community.docker` collection on the controller (`requirements.yml`).
+- A role named **`create-service-account`** on the roles path, which this role
+  includes to create the service account. It is not part of this repository;
+  it receives `service_user`, `service`, `uid`, `gid`, `system_user` and
+  `create_home`, creates the group and the system user, and adds `system_user`
+  to the group. rkoshak's post above shows one.
 
-**Work In Progress**: `molecule/default` is rudimentary; the focused
-`molecule/git-seeding` scenario is the one that proves current behaviour.
+## Role Variables
 
+All variables are optional; the defaults are in
+[`defaults/main.yml`](defaults/main.yml) and the full surface is validated by
+[`meta/argument_specs.yml`](meta/argument_specs.yml).
 
-### It will
-- create an openHAB service account
-- add the system user to the openHAB service group
-- if configured: seed `conf/` and `userdata/` from two separate git repositories
-- create missing folders & set permissions
-- pull the latest openHAB image and recreate the container if it changed
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `openhab_system_user` | `link` | Existing host user added to the openHAB service group |
+| `openhab_uid` | `9001` | UID and GID of the service account |
+| `openhab_home` | `/opt/docker/openhab` | Root of `conf/`, `userdata/` and `addons/` |
+| `openhab_conf_repo` | `""` | Git URL that seeds `conf/`; empty disables it |
+| `openhab_conf_repo_branch` | `develop` | Branch checked out when `conf/` is seeded |
+| `openhab_state_repo` | `""` | Git URL that seeds `userdata/`; empty disables it |
+| `openhab_state_repo_branch` | `develop` | Branch checked out when `userdata/` is seeded |
+| `openhab_git_user_name` | `""` | Name for commits made on the host |
+| `openhab_git_user_email` | `""` | Email for commits made on the host |
+| `openhab_version` | `latest` | Tag of the `openhab/openhab` image |
+| `openhab_hostname` | `openhab` | Hostname of the container |
+| `openhab_timezone` | `Europe/Berlin` | Time zone passed to the JVM |
 
-Role Variables
---------------
+**Upgrading from the single-repo layout.** `openhab_repo`, `openhab_repo_branch`
+and `openhab_repo_force` are removed; setting `openhab_repo` fails the run with a
+pointer here. `system_user` is now `openhab_system_user`.
 
-`openhab/defaults/main` contains variables which should be overwritten to customize this role:
-```yml
-# to be added to the openhab user group
-system_user: link
-# openhab user ID
-openhab_uid: 9001
-# root directory of openhab data
-openhab_home: /opt/docker/openhab
-# openHAB config repository [optional]
-# Authentication has to be resolved beforehand, one option would be SSH Key 
-# Authentication.
-# Example: ssh://{{ system_user }}@git.example.com:port/path/to/repo/openhab.git
-# NOTE: superseded -- see "Two repositories" below.
-openhab_repo:
-# which branch?
-openhab_repo_branch: master
-# should local changes be discarded?
-openhab_repo_force: yes
-# which openHAB version should be pulled from Docker?
-openhab_version: latest
-# Docker container hostname
-openhab_hostname: openhab
-# TimeZone: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
-openhab_timezone: Europe/Berlin
-```
+## Two repositories: config and state
 
-Requirements
-------------
-
-- [git](https://git-scm.com) - might be installed & configured via [weareinteractive.git](https://github.com/weareinteractive/ansible-git)
-- [OpenSSH Server](https://www.openssh.com) - might be installed via [weareinteractive.apt](https://github.com/weareinteractive/ansible-apt)
-- [Docker](https://www.docker.com) - might be installed via [geerlingguy.docker_arm](https://github.com/geerlingguy/ansible-role-docker_arm)
-
-Dependencies
-------------
-
-- *create-service-account*: a role copied from [rkoshak](https://github.com/rkoshak)s post [Ansible Revisited](https://community.openhab.org/t/ansible-revisited/105754) in the [openHAB community](https://community.openhab.org):
-  ```yml
-  ---
-  # tasks file for create-service-account
-
-  - name: "Create {{ service_user }} group so we can control the gid"
-    group:
-      gid: "{{ gid }}"
-      name: "{{ service_user }}"
-      state: present
-      system: True
-    become: True
-
-  - name: "Create {{ service_user }} user"
-    user:
-      comment: "{{ service }} service"
-      createhome: "{{ create_home }}"
-      group: "{{ service_user }}"
-      name: "{{ service_user }}"
-      shell: /usr/sbin/nologin
-      state: present
-      system: True
-      uid: "{{ uid }}"
-    become: True
-
-  - name: "Add {{ system_user }} to the {{ service_user }} group"
-    user:
-      append: True
-      groups: "{{ service_user }}"
-      name: "{{ system_user }}"
-    become: True
-  ```
-
-Example Playbook
-----------------
-This role is only one step in setting up a new server - if you have already a prepared server the following play would be enough:
-
-```yml
-- name: Playbook to add an openHAB Docker image
-  hosts: openhab
-  debugger: on_failed
-  become: true
-
-  tasks:
-  - include_role: 
-      name: openhab
-```
-
-If you have to setup a server from scratch the following play might give you a hint about which steps are needed:
-
-```yml
-# invoke with `ansible-playbook openhab-play.yml --vault-id openhab@prompt`
-
-- name: Playbook to set up an openHAB server on a Raspberry Pi
-  hosts: openhab
-  gather_facts: false
-  debugger: on_failed
-  become: true
-
-  tasks:
-    # * rename the default user *pi* to *user_name*
-    # * set a new user password *user_password*
-    # * rename the home dir */home/{{ user_name_old }}* to */home/{{ user_name_new }}*
-    # * create a symlink */home/{{ user_name_old }}* linking to */home/{{ user_name_new }}*
-    # * change the hostname to *host_name*
-    # * configure locale
-    # * set timezone to *localization_timezone*
-    # * activate auto-updates / -upgrades
-    # * install and configure vim
-    # * set sensible defaults for the SSH server
-    # * write public SSH keys to *user_name*'s *authorized_keys* file
-    # * install and configure a firewall (ufw)
-    - include_role: 
-        name: prepare-raspberry
-    # open ports necessary for openHAB
-    - include_role:
-        name: weareinteractive.ufw
-      vars:
-        ufw_rules: "{{ openhab_ufw_rules }}"
-    # install & configure git
-    - include_role:
-        name: "weareinteractive.git"
-      vars:
-        git_config:
-          user:
-            name: "{{ git_commit_user_name }}"
-            email: "{{ git_commit_user_email }}"
-    # install pip (requirement for docker_arm)
-    - include_role: 
-        name: geerlingguy.pip
-    # install docker
-    - include_role: 
-        name: geerlingguy.docker_arm
-    # reboot
-    - include_role: 
-        name: GROG.reboot
-    # install openHAB
-    - include_role:
-        name: "openhab"
-      vars:
-        system_user: "{{ user_name }}"
-    # install the Web-Log-Viewer also used in openHABian 
-    - include_role:
-        name: "frontail"
-    # reduce SD Card wear
-    - include_role:
-        name: "minimize-writes"
-    # create SMB share for the openHAB configuration
-    - include_role:
-        name: "bertvv.samba"
-    # I use this Raspberry only for openHAB -> when I SSH onto the server, I almost always want to go to the openHAB folder
-    - name: SSH into openHAB folder
-      blockinfile:
-        path: /home/{{ user_name }}/.bashrc
-        block: |
-          # on login jump to openhab directory
-          cd {{ openhab_home }}
-```
-- the prepare-raspberry role can be found as part of my [ansible-gitserver](https://github.com/fex01/ansible-gitserver) repo
-- *minimize-writes*: a role copied from [rkoshak](https://github.com/rkoshak)s post [Ansible Revisited](https://community.openhab.org/t/ansible-revisited/105754) in the [openHAB community](https://community.openhab.org):
-  ```yml
-  ---
-  # tasks file for minimize-writes
-  # http://www.zdnet.com/article/raspberry-pi-extending-the-life-of-the-sd-card
-
-  - name: Mount /tmp to tmpfs
-    mount:
-      path: "{{ item.path }}"
-      src: tmpfs
-      fstype: tmpfs
-      opts: defaults,noatime,nosuid,size={{ item.size }}
-      dump: "0"
-      state: mounted
-    loop:
-      - { "path": "/tmp", "size": "100m" }
-      - { "path": "/var/tmp", "size": "30m" }
-      - { "path": "/var/log", "size": "100m" }
-    register: mounted
-    become: True
-
-  - name: Reboot if changed
-    include_role:
-      name: GROG.reboot
-    when: mounted.changed
-  ```
-
-
-License
--------
-
-MIT
-
-
-Two repositories: config and state
-----------------------------------
-
-openHAB's `openhab_home` holds two things with opposite ownership, and this
-role no longer treats them as one:
+`openhab_home` holds two things with opposite ownership, and this role does not
+treat them as one:
 
 | Variable | Seeds | Source of truth |
 | --- | --- | --- |
@@ -229,22 +76,18 @@ role no longer treats them as one:
 
 `conf/` is declarative automation — items, rules, scripts, sitemaps. `userdata/`
 is runtime state: thing status, jsondb, user sessions, and generated secrets
-that rotate on their own. A single repo forced them to share one policy, and
-`openhab_repo_force: yes` applied that policy to the whole tree, so every deploy
-discarded runtime state. **`openhab_repo`, `openhab_repo_branch` and
-`openhab_repo_force` are removed**; setting `openhab_repo` now fails the run
-with a pointer here rather than silently doing nothing.
+that rotate on their own. The state repository's root is the content of
+`userdata/`.
 
 ### Seed once, never fetch
 
 Both repositories are used only to *seed* an unseeded target. On a converged
 host the role does no fetch at all — it only corrects a drifted `origin` URL,
-which cannot touch the working tree. Consequences worth being explicit about:
+which cannot touch the working tree. So:
 
 - **The host needs no git credential in steady state.** Nothing authenticates
-  to your git server on a normal run, so no private key belongs on the managed
-  host. (An earlier version of this role passed `key_file` pointing at one; that
-  is gone.)
+  to your git server on a normal run, and no private key belongs on the managed
+  host.
 - **Publishing new config is a deliberate operator step** — a manual pull — not
   something a deploy performs unannounced.
 - **A populated tree can never be reset.** There is no code path that does it.
@@ -291,14 +134,59 @@ the service user. The role's own git commands pass that exception on their
 command line, so they work on service-owned trees from the first run, and under
 `--check` too.
 
-### Testing
+## Example Playbook
 
-`molecule/git-seeding` covers this wiring end to end against bare repositories
-created inside the container, so it needs no network, no git server and no
-credentials:
-
-```sh
-molecule test -s git-seeding
+```yaml
+- name: Run openHAB
+  hosts: openhab
+  become: true
+  roles:
+    - role: openhab
+      vars:
+        openhab_version: "5.1.2"
+        openhab_conf_repo: git@git.example.com:home/openhab-conf.git
+        openhab_state_repo: git@git.example.com:home/openhab-state.git
+        openhab_git_user_name: Jane Doe
+        openhab_git_user_email: jane@example.com
 ```
 
-`molecule/default` remains rudimentary and is not part of this scenario.
+## Running the tests
+
+Everything runs through one script, the same one CI calls. It needs
+[uv](https://docs.astral.sh/uv/) and a Docker daemon your user can reach; uv
+installs the pinned toolchain from `uv.lock` into `.venv/` on the first run,
+and the script installs the collections `requirements.yml` pins into
+`.ansible/collections/` — neither touches anything outside the checkout.
+
+```sh
+git clone https://github.com/xxthunder/ansible-role-openhab.git
+cd ansible-role-openhab
+scripts/test.sh        # yamllint, ansible-lint, then every Molecule scenario
+scripts/test.sh lint   # the static checks only
+```
+
+What runs:
+
+- **yamllint** and **ansible-lint** over the whole role.
+- **`molecule/git-seeding`** — starts a Debian 12 container with bare
+  repositories inside it as stand-in remotes, reached over `file://` and over
+  ssh through an agent that holds the only key. It converges `tasks/git.yml`
+  against a greenfield tree, a tree the service user owns that already holds
+  config and live state, a seed that fails and is retried, a seed over ssh
+  under `become`, and the superseded `openhab_repo`. It runs a second time to
+  prove idempotence, then verifies that every greenfield tree was seeded as an
+  ordinary clone while the populated one kept its local edit and its state. No
+  network, no real git server, no real credentials. The container is removed at
+  the end.
+
+To look around in the scenario's container instead of tearing it down:
+
+```sh
+uv run molecule converge -s git-seeding   # create and converge, keep it running
+uv run molecule login -s git-seeding      # shell inside the container
+uv run molecule destroy -s git-seeding    # clean up
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
