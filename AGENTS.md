@@ -72,8 +72,10 @@ repositories created inside the container, so it needs no network, no git
 server and no credentials. It converges `tasks/git.yml` alone — never the whole
 role — so it needs no docker-in-docker for the openHAB container.
 
-**`molecule/default`** is vestigial and currently proves nothing (see
-[ARO-003](docs/backlog/aro-003.md)). Do not cite it as evidence.
+There is no full-role scenario: the openHAB container start is verified on a
+real host at the release-candidate step ([ARO-003](docs/backlog/aro-003.md)).
+A new scenario is focused on one concern and asserts something that fails when
+that concern breaks.
 
 Static checks — always available, never sufficient:
 

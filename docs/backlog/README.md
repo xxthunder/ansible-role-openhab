@@ -9,15 +9,15 @@
 ## Table of Contents
 
 ### Open
-- [ARO-003 — Repair or retire `molecule/default`](aro-003.md)
-- [ARO-004 — Add CI: lint and molecule on push](aro-004.md)
 - [ARO-005 — Settle the tagging and release policy](aro-005.md)
+- [ARO-004 — Add CI: lint and molecule on push](aro-004.md)
 
 ### In Progress
-- [ARO-001 — Scaffold the repo for standalone agentic development](aro-001.md)
 - [ARO-002 — Seed `conf/` and `userdata/` from two repositories](aro-002.md)
+- [ARO-001 — Scaffold the repo for standalone agentic development](aro-001.md)
 
 ### Done
+- [ARO-003 — Repair or retire `molecule/default`](aro-003.md)
 
 ## Notes
 
