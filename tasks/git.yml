@@ -43,13 +43,13 @@
   # This overlays the repo onto whatever is there.
   when:
     - openhab_conf_repo | length > 0
-    - not openhab_conf_dotgit.stat.exists
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
       mkdir -p {{ (openhab_home ~ '/conf') | quote }}
       cd {{ (openhab_home ~ '/conf') | quote }}
       git init -q
+      git remote remove origin 2>/dev/null || true
       git remote add origin {{ openhab_conf_repo | quote }}
       git fetch -q --depth 1 origin {{ openhab_conf_repo_branch | quote }}
       git checkout -q -f -B {{ openhab_conf_repo_branch | quote }} FETCH_HEAD
