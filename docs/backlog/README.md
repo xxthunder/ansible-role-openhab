@@ -9,6 +9,7 @@
 ## Table of Contents
 
 ### Open
+- [ARO-007 — Keep what the operator creates in `conf/` writable across container restarts](aro-007.md)
 - [ARO-006 — Keep the permission tasks stable against openHAB's own writes](aro-006.md)
 - [ARO-005 — Settle the tagging and release policy](aro-005.md)
 
