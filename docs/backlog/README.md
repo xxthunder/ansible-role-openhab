@@ -9,6 +9,7 @@
 ## Table of Contents
 
 ### Open
+- [ARO-006 — Keep the permission tasks stable against openHAB's own writes](aro-006.md)
 - [ARO-005 — Settle the tagging and release policy](aro-005.md)
 
 ### In Progress
