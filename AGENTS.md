@@ -21,10 +21,13 @@ does not track upstream. Attribution stays; lineage does not.
 ## This repo is public
 
 Nothing in it may name the maintainer's lab: host names, IP addresses, internal
-domains or URLs, the consuming project's name, personal or family names. This
-covers **prose, comments, examples and commit messages**, not just links and
-config. Write the generic form instead — "any Docker-capable host", "the
-consuming project" — which reads better anyway.
+domains or URLs, the lab's own name, the consuming project's name, or family
+members. This covers **prose, comments, examples and commit messages**, not just
+links and config. Write the generic form instead — "any Docker-capable host",
+"the consuming project" — which reads better anyway.
+
+The maintainer's own name is not a lab identifier. It is in every commit's
+author line, and it belongs wherever authorship is stated, such as `LICENSE`.
 
 Consumer backlog items are cited by bare ID (e.g. `HSH-067`), never as a link:
 an ID is opaque, a URL is not, and a link would be dead for most readers.
