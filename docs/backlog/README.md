@@ -14,12 +14,12 @@
 - [ARO-005 — Settle the tagging and release policy](aro-005.md)
 
 ### In Progress
-- [ARO-001 — Scaffold the repo for standalone agentic development](aro-001.md)
 
 ### Done
 - [ARO-004 — Add CI and meet the publishing bar](aro-004.md)
 - [ARO-003 — Repair or retire `molecule/default`](aro-003.md)
 - [ARO-002 — Seed `conf/` and `userdata/` from two repositories](aro-002.md)
+- [ARO-001 — Scaffold the repo for standalone agentic development](aro-001.md)
 
 ## Notes
 
