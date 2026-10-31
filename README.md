@@ -15,6 +15,8 @@ The role
 - seeds `conf/` and `userdata/` from separate repositories, once (see
   [Two repositories](#two-repositories-config-and-state)),
 - creates the folders the openHAB image needs and sets their ownership,
+- keeps what the operator creates in `conf/` and `userdata/` writable across
+  container restarts (see [Operator access](#operator-access)),
 - pulls the requested `openhab/openhab` image and recreates the container if it
   changed, with host networking.
 
@@ -32,7 +34,10 @@ The role
 ## Requirements
 
 - Debian 12 (bookworm) or 13 (trixie) with Docker and git installed.
-- The `community.docker` collection on the controller (`requirements.yml`).
+- The `community.docker` and `ansible.posix` collections on the controller
+  (`requirements.yml`).
+- A file system under `openhab_home` with POSIX ACLs, as ext4, XFS and Btrfs
+  have by default. The role installs the `acl` package.
 - A role named **`create-service-account`** on the roles path, which this role
   includes to create the service account. It is not part of this repository;
   it receives `service_user`, `service`, `uid`, `gid`, `system_user` and
@@ -136,6 +141,32 @@ the service user. The role's own git commands pass that exception on their
 command line, so they work on service-owned trees from the first run, and under
 `--check` too.
 
+## Operator access
+
+The operator — `openhab_operator_user_name`, a member of the service account's
+group — edits `conf/` and runs git in both trees on the host. The role gives the
+group read and write access to the whole tree (`u=rwX,g=rwX,o=`), and that
+holds for what exists when it runs.
+
+What is created later carries its creator's umask: a folder a checkout adds, or
+git's own `objects/xx/`, comes out `755`, a file `644`. The openHAB image's
+entrypoint hands the whole tree to the service account on every container start
+and keeps each mode, so from then on the group could only read it, and the next
+`git checkout` or `git reset` would fail with `Permission denied`.
+
+So the role also sets a default ACL on `conf/` and `userdata/` that grants the
+service account's group `rwX`. It survives the entrypoint's `chown` and makes
+what is created below it group-writable from the start, whoever creates it —
+the operator's git as much as openHAB itself. Setting it removes nothing,
+ignored files included.
+
+The ACL widens what the creating program allows; it never overrides it. A file
+created `0600`, or narrowed later by a `chmod 644`, stays closed to the group
+until the next role run. git creates with `0666` and `0777`, so the operator's
+git is not affected. Until the next container start, what the operator creates
+also belongs to the operator's primary group, which gets the same access — keep
+that group private to the operator.
+
 ## Example Playbook
 
 ```yaml
@@ -180,6 +211,11 @@ What runs:
   ordinary clone while the populated one kept its local edit and its state. No
   network, no real git server, no real credentials. The container is removed at
   the end.
+- **`molecule/operator-write`** — converges `tasks/permissions.yml` against
+  trees the service account owns, with and without a state checkout. Then, as
+  the operator with umask `022`, it commits new folders in both trees, runs the
+  entrypoint's `chown -R`, and commits, switches branches and resets again. It
+  also verifies that the role left every file in place, ignored ones included.
 
 To look around in the scenario's container instead of tearing it down:
 
