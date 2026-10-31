@@ -32,44 +32,9 @@
     apply:
       become: true
 
-- name: Create if necessary and set the permissions on the openHAB data folder
-  ansible.builtin.file:
-    path: "{{ openhab_home }}"
-    state: directory
-    owner: "{{ openhab_service_user_name }}"
-    group: "{{ openhab_service_user_name }}"
-    mode: u=rwX,g=rwX,o=
-    recurse: true
-  become: true
-
-# The openHAB image refuses to start unless these exist. The three mounted
-# directories are needed on every host; the userdata/ subdirectories are
-# transient and are gitignored out of the state repo, so they are missing after
-# a seed. One unconditional list covers both cases.
-- name: Create the folders the container mounts and openHAB requires
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: "{{ openhab_service_user_name }}"
-    group: "{{ openhab_service_user_name }}"
-    mode: u=rwX,g=rwX,o=
-  loop:
-    - "{{ openhab_home }}/addons"
-    - "{{ openhab_home }}/conf"
-    - "{{ openhab_home }}/userdata"
-    - "{{ openhab_home }}/userdata/cache"
-    - "{{ openhab_home }}/userdata/logs"
-    - "{{ openhab_home }}/userdata/persistence"
-    - "{{ openhab_home }}/userdata/tmp"
-  become: true
-
-- name: Change ownership of the openHAB tree
-  ansible.builtin.file:
-    path: "{{ openhab_home }}"
-    owner: "{{ openhab_service_user_name }}"
-    group: "{{ openhab_service_user_name }}"
-    recurse: true
-  become: true
+- name: Set the ownership and permissions of the openHAB tree
+  ansible.builtin.import_tasks:
+    file: permissions.yml
 
 - name: Pull/update the openHAB docker image
   tags: openhab

@@ -123,7 +123,8 @@ build is never blessed as a version.
   needing it. One-time migration steps belong in the consumer's runbook, not in
   role logic that then runs forever.
 - **Single responsibility per task file.** `tasks/git.yml` owns repository
-  wiring; `tasks/main.yml` orchestrates.
+  wiring; `tasks/permissions.yml` the tree's ownership and modes;
+  `tasks/main.yml` orchestrates.
 
 ## Definition of Done
 
