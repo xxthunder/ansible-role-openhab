@@ -1,0 +1,92 @@
+---
+# The operator's workflow against the entrypoint's `chown -R`, in both trees and
+# their .git: commit with umask 022, let the container start, commit, switch
+# branches and reset again. The failure this guards against is the one found on
+# a real host — `git reset --hard` hitting "Permission denied" on a folder a
+# checkout had created between two role runs.
+- name: Verify
+  hosts: all
+  gather_facts: false
+
+  vars:
+    service_user: openhab
+    operator: "{{ openhab_operator_user_name }}"
+    # git refuses a tree another user owns until it is marked safe; on a host
+    # the operator's own git config does that.
+    git: git -c safe.directory="*" -c user.name=Operator -c user.email=operator@example.invalid
+
+  tasks:
+    - name: Read the ignored files after the role's runs
+      # slurp fails on a file that is gone.
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      register: ignored_files
+      loop:
+        - /opt/docker/seeded/conf/existing/IGNORED.local
+        - /opt/docker/seeded/userdata/existing/IGNORED.local
+        - /opt/docker/conf-only/conf/existing/IGNORED.local
+        - /opt/docker/conf-only/userdata/IGNORED.local
+
+    - name: The role removed no file and changed none, ignored ones included
+      ansible.builtin.assert:
+        that: (item.content | b64decode) == 'ignored\n'
+        fail_msg: "{{ item.item }} changed"
+      loop: "{{ ignored_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: The operator commits new folders and files with umask 022
+      ansible.builtin.command:
+        cmd: >-
+          runuser -u {{ operator }} -- bash -euc '
+          umask 022; cd {{ item }};
+          mkdir -p automation/js existing/sub;
+          echo one > automation/js/rule.js;
+          echo one > existing/sub/note.txt;
+          {{ git }} add -A; {{ git }} commit -q -m "add a rule";
+          {{ git }} branch feature/one'
+      changed_when: true
+      loop: &trees
+        - /opt/docker/seeded/conf
+        - /opt/docker/seeded/userdata
+
+    - name: The container starts, and its entrypoint hands the tree to the service account
+      ansible.builtin.command:
+        cmd: chown -R {{ service_user }}:{{ service_user }} /opt/docker/seeded
+      changed_when: true
+
+    - name: The operator still edits, adds, commits, switches branches and resets
+      ansible.builtin.command:
+        cmd: >-
+          runuser -u {{ operator }} -- bash -euc '
+          umask 022; cd {{ item }};
+          echo two >> automation/js/rule.js;
+          echo two >> existing/sub/note.txt;
+          {{ git }} branch feature/two;
+          mkdir automation/js/lib;
+          echo three > automation/js/lib/util.js;
+          {{ git }} add -A; {{ git }} commit -q -m "extend the rule";
+          {{ git }} checkout -q -b other;
+          {{ git }} reset -q --hard HEAD~2;
+          test ! -e automation'
+      changed_when: true
+      loop: *trees
+
+    - name: Read the ACL of each tree's top
+      ansible.posix.acl:
+        path: "{{ item }}"
+        state: query
+      register: tree_acls
+      loop:
+        - /opt/docker/seeded/conf
+        - /opt/docker/seeded/userdata
+        - /opt/docker/conf-only/conf
+        - /opt/docker/conf-only/userdata
+
+    - name: Each tree carries the default ACL, checkout or not
+      ansible.builtin.assert:
+        that: "'default:group:' ~ service_user ~ ':rwx' in item.acl"
+        fail_msg: "{{ item.item }}: {{ item.acl }}"
+      loop: "{{ tree_acls.results }}"
+      loop_control:
+        label: "{{ item.item }}"

@@ -1,6 +1,6 @@
 ---
-# Ownership and modes of the openHAB tree, and the folders the container
-# mounts. Runs after the seed in git.yml, never before it.
+# Ownership, modes and default ACLs of the openHAB tree, and the folders the
+# container mounts. Runs after the seed in git.yml, never before it.
 
 - name: Create if necessary and set the permissions on the openHAB data folder
   ansible.builtin.file:
@@ -39,4 +39,52 @@
     owner: "{{ openhab_service_user_name }}"
     group: "{{ openhab_service_user_name }}"
     recurse: true
+  become: true
+
+# The image's entrypoint hands the whole tree to the service account on every
+# container start, and keeps each mode. What is created between two runs — a
+# checkout's new folder, git's objects/xx/, a file openHAB writes — carries its
+# creator's umask, so after that hand-over the group bits can leave the operator
+# read access only. A default ACL survives the chown and makes anything created
+# below it group-writable from the start, as far as the creating mode allows
+# (git creates with 0666 and 0777). It goes on both trees: git writes the
+# working tree on checkout and reset, in userdata/ as much as in conf/.
+# Without a cache update: a host that has the package needs no mirror.
+- name: Install the ACL tools
+  ansible.builtin.apt:
+    name: acl
+    state: present
+  register: openhab_acl_package
+  become: true
+
+- name: Find the trees the operator works in
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    # A tree may be a link to another disk; the ACL belongs on its target.
+    follow: true
+  register: openhab_operator_trees
+  loop:
+    - "{{ openhab_home }}/conf"
+    - "{{ openhab_home }}/userdata"
+  become: true
+
+# Recursively, so that folders a seed already created inherit it too. It sets
+# ACL entries only and removes nothing, ignored files included. Under
+# --check on a fresh host neither the tools nor the trees exist yet; the tasks
+# above report what they would do, and this one waits for the real run.
+- name: Keep what the operator creates writable for the service account's group
+  ansible.posix.acl:
+    path: "{{ item.item }}"
+    etype: group
+    entity: "{{ openhab_service_user_name }}"
+    permissions: rwX
+    default: true
+    recursive: true
+    state: present
+  loop: "{{ openhab_operator_trees.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - item.stat.isdir | default(false)
+    - not (ansible_check_mode and openhab_acl_package is changed)
   become: true

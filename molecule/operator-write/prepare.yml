@@ -1,0 +1,72 @@
+---
+# Builds what the role finds after a seed: the service account with the
+# operator in its group, and an openHAB tree owned by that account. "seeded"
+# has both trees as git checkouts; "conf-only" has a userdata/ that is no
+# checkout, the shape of a host without a state repo. create-service-account
+# belongs to the consuming project, so the accounts are made here.
+- name: Prepare
+  hosts: all
+  gather_facts: false
+
+  vars:
+    service_user: openhab
+    service_uid: 9001
+
+  tasks:
+    - name: Install git
+      ansible.builtin.apt:
+        name: git
+        state: present
+        update_cache: true
+
+    - name: Create the service account's group
+      ansible.builtin.group:
+        name: "{{ service_user }}"
+        gid: "{{ service_uid }}"
+
+    - name: Create the service account
+      ansible.builtin.user:
+        name: "{{ service_user }}"
+        uid: "{{ service_uid }}"
+        group: "{{ service_user }}"
+        create_home: false
+
+    - name: Create the operator in the service account's group
+      ansible.builtin.user:
+        name: "{{ openhab_operator_user_name }}"
+        groups: "{{ service_user }}"
+
+    # Each checkout has a commit, so .git already holds folders such as
+    # objects/xx/ before the role runs — the default ACL has to reach those
+    # too, not only the tree's top. Each tree also holds a file git ignores,
+    # which the role must leave in place like any other.
+    - name: Build the trees
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          for repo in seeded/conf seeded/userdata conf-only/conf; do
+            mkdir -p /opt/docker/$repo/existing
+            cd /opt/docker/$repo
+            git init -q
+            echo "seeded" > existing/SEEDED.txt
+            echo "*.local" > .gitignore
+            echo "ignored" > existing/IGNORED.local
+            git add -A
+            git -c user.name=Seed -c user.email=seed@example.invalid commit -q -m seed
+          done
+          mkdir -p /opt/docker/conf-only/userdata
+          echo "ignored" > /opt/docker/conf-only/userdata/IGNORED.local
+        executable: /bin/bash
+        creates: /opt/docker/seeded/conf/.git/HEAD
+
+    - name: Hand the trees to the service account, as a seed leaves them
+      ansible.builtin.file:
+        path: "/opt/docker/{{ item }}"
+        state: directory
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: u=rwX,g=rwX,o=
+        recurse: true
+      loop:
+        - seeded
+        - conf-only

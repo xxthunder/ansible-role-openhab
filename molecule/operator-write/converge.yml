@@ -1,0 +1,22 @@
+---
+# One converge per tree shape. The role is named after the checkout's
+# directory, so the scenario runs from any clone or worktree.
+- name: Converge
+  hosts: all
+  gather_facts: false
+
+  vars:
+    role_under_test: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
+
+  tasks:
+    - name: Set the permissions of each tree
+      ansible.builtin.include_role:
+        name: "{{ role_under_test }}"
+        tasks_from: permissions
+      vars:
+        openhab_home: "/opt/docker/{{ home }}"
+      loop:
+        - seeded
+        - conf-only
+      loop_control:
+        loop_var: home
