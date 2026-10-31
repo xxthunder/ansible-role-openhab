@@ -84,6 +84,10 @@ probing for a `default` scenario to share state with: its config loader logs
 the miss as critical before the caller catches it and carries on. It is
 expected here and changes nothing.
 
+**`molecule/operator-write`** covers the operator's write access against the
+image entrypoint's `chown -R` ([ARO-007](docs/backlog/aro-007.md)). It
+converges `tasks/permissions.yml` alone, with the same pinned image.
+
 There is no full-role scenario: the openHAB container start is verified on a
 real host at the release-candidate step ([ARO-003](docs/backlog/aro-003.md)).
 A new scenario is focused on one concern and asserts something that fails when
@@ -123,7 +127,8 @@ build is never blessed as a version.
   needing it. One-time migration steps belong in the consumer's runbook, not in
   role logic that then runs forever.
 - **Single responsibility per task file.** `tasks/git.yml` owns repository
-  wiring; `tasks/main.yml` orchestrates.
+  wiring; `tasks/permissions.yml` the tree's ownership, modes and ACLs;
+  `tasks/main.yml` orchestrates.
 
 ## Definition of Done
 

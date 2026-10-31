@@ -13,7 +13,7 @@
 - [ARO-005 — Settle the tagging and release policy](aro-005.md)
 
 ### In Progress
-- [ARO-007 — Keep what the operator creates in `conf/` writable across container restarts](aro-007.md)
+- [ARO-007 — Keep what the operator creates in `conf/` and `userdata/` writable across container restarts](aro-007.md)
 
 ### Done
 - [ARO-004 — Add CI and meet the publishing bar](aro-004.md)

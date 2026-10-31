@@ -1,0 +1,43 @@
+---
+# Focused scenario for the operator's write access (ARO-007).
+#
+# It converges tasks/permissions.yml alone, never the whole role, against trees
+# prepare.yml builds. verify.yml then works in them as the operator does — a
+# commit with umask 022 creates folders and files — and runs what the openHAB
+# image's entrypoint runs on every container start, `chown -R` to the service
+# account. The operator must still be able to write everything it created.
+#
+# Same image as git-seeding, pinned by digest; bump both together.
+scenario:
+  test_sequence:
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - check
+    - converge
+    - idempotence
+    - verify
+    - destroy
+driver:
+  name: docker
+platforms:
+  - name: openhab-operator-write
+    image: geerlingguy/docker-debian12-ansible@sha256:43b3f59882ccc0ba5deb3b3ecac727084bb082a3230b5258c500395694b5497f
+    pre_build_image: true
+provisioner:
+  name: ansible
+  env:
+    # The checkout is the role, named after its directory (converge.yml), so
+    # its parent goes on the roles path.
+    ANSIBLE_ROLES_PATH: "${MOLECULE_PROJECT_DIRECTORY}/.."
+  playbooks:
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+  inventory:
+    host_vars:
+      openhab-operator-write:
+        openhab_operator_user_name: operator
+verifier:
+  name: ansible

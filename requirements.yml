@@ -12,7 +12,7 @@ collections:
   # driver needs the collection too.
   - name: community.docker
     version: "5.2.0"
-  # Molecule's docker driver uses ansible.posix in its create playbook. The
-  # scenario has no dependency step to pull it in, so it is listed here.
+  # ansible.posix.acl sets the default ACL on conf/ and userdata/, and
+  # Molecule's docker driver uses the collection in its create playbook.
   - name: ansible.posix
     version: "2.2.0"
